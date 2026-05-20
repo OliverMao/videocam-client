@@ -16,12 +16,14 @@ import time
 APP_NAME = "FastAPI Simple Framework"
 APP_VERSION = "0.1.0"
 DEFAULT_PACKET_PATH = "packet.pt"
-DEFAULT_CHECKPOINT = f'D:\\Project\\30FloorVideoCam\\backend\\app\\core\\Qwen3-vl-2B'
+DEFAULT_CHECKPOINT = "/workspace/s/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/jzy/models/Qwen3-VL-2B-Instruct"
 TMP_DIR = "./tmpfile"
 # DEFAULT_TEXT = "图片中是否有违规行为，包括但不限于：1.吸烟 2.打架 3.赌博 4.其他违规行为。明确指出违规行为。输出如下：\n吸烟。\n如果图片中没有违规行为，输出如下：\n无。"
 
 DEFAULT_TEXT = """
-请分析图片内容，判断是否存在违规行为。违规行为包括但不限于：吸烟、打架、着火、摔倒、赌博以及其他违规行为。请先回答画面中一共有几个人，分别的特征，并附加一些简短的画面描述。
+你的位置是在TeleAI的展厅中。
+
+请分析图片内容，判断是否存在违规行为。违规行为包括但不限于：吸烟、打架、着火、摔倒、赌博以及其他违规行为。请先回答画面中一共有几个人，分别的动作，不包括隐私信息包括性别等，并附加一些简短的画面描述。回答的环境是TeleAI的展厅中。
 
 严格按照以下JSON格式输出，不要添加任何其他文字或解释：
 {
@@ -38,7 +40,7 @@ DEFAULT_TEXT = """
 """
 
 # 假设你的后端地址
-SERVER_URL = "http://116.238.240.2:32082/infer"
+SERVER_URL = "http://127.0.0.1:8010/infer"
 # 确保临时目录存在
 os.makedirs(TMP_DIR, exist_ok=True)
 
@@ -48,7 +50,7 @@ async def lifespan(app: FastAPI):
     # client 模式只跑到 patch_embed，输出可传输的视觉 token。
     model = Qwen3VLForSplitInference.from_pretrained(
         DEFAULT_CHECKPOINT,
-        device_map="cpu",
+        device_map={"": "cuda:1"},
         trust_remote_code=True,
         mode="client",
     )
@@ -188,7 +190,7 @@ async def build_packet(
 
     # 7. 通过 HTTP 发送到后端
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(proxy=None, trust_env=False) as client:
             # 模拟 multipart/form-data 上传
             response = await client.post(
                 SERVER_URL,
@@ -219,4 +221,4 @@ async def build_packet(
         raise HTTPException(status_code=502, detail=f"无法连接到后端服务器: {str(exc)}")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=28101)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
