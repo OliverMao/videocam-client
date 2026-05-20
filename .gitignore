@@ -1,0 +1,17 @@
+__pycache__
+Qwen3-vl-2B
+tmpfile
+*.tar
+node_modules
+dist
+*.log
+*.cache
+*.tmp
+*.bak
+*.swp
+.DS_Store
+.vscode
+.idea
+pnpm-lock.yaml
+yarn.lock
+package-lock.json

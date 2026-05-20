@@ -1,0 +1,1 @@
+{"vision_split_time_ms": 2.6443004608154297, "total_api_time_ms": 550.6670475006104, "server_response": {"result": "```json\n{\n  \"description\": \"一名男子在室内向一群人讲解，背景是多个显示屏。\",\n  \"violations\": []\n}\n```", "api_time_ms": 476.52435302734375, "inference_time_ms": 475.60858726501465}, "image_processing_time_ms": 22.112607955932617}
