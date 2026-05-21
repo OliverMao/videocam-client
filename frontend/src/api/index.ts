@@ -2,11 +2,11 @@ import axios from 'axios'
 import type { ShowClientData, InferenceResult, ViolationInfo } from './types'
 
 const api = axios.create({
-  baseURL: 'http://192.168.151.96:28001/api',
+  baseURL: 'http://192.168.153.50:28001/api',
   timeout: 30000
 })
 
-const BASE_URL = 'http://192.168.151.96:28001/api'
+const BASE_URL = 'http://192.168.153.50:28001/api'
 
 const violationConfig: Record<string, ViolationInfo> = {
   '吸烟': { label: '吸烟', icon: '🚬', color: '#f97316', bgColor: '#7c2d12', severity: 'medium' },

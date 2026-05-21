@@ -4,6 +4,7 @@ import { fetchShowClientData, parseInferenceResult, getWebSocketUrl } from '../a
 import type { ShowClientData, InferenceResult } from '../api/types'
 import StreamPlayer from './StreamPlayer.vue'
 
+const streamUrl = "http://192.168.153.50:8080/live/livestream.flv"
 
 import { 
   Cigarette, 
@@ -104,7 +105,7 @@ onUnmounted(() => { if (intervalId) clearInterval(intervalId) })
             <span class="header-tag">LIVE FEED</span>
           </div>
           <div class="panel-content">
-            <StreamPlayer :ws-url="getWebSocketUrl()" @error="onStreamError" @connected="onStreamConnected"
+            <StreamPlayer :streamUrl="streamUrl" @error="onStreamError" @connected="onStreamConnected"
               @disconnected="onStreamDisconnected" />
           </div>
         </div>

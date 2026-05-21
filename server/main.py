@@ -59,52 +59,6 @@ async def get_show_client():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Invalid result format: {e}")
 
-@app.websocket("/api/ws/stream")
-async def websocket_stream(websocket: WebSocket):
-    if inference_client is None:
-        await websocket.close(code=1013, reason="Client not initialized")
-        return
-
-    await websocket.accept()
-
-    q = inference_client.create_stream_queue()
-    try:
-        while True:
-            try:
-                chunk = q.get_nowait()
-                await websocket.send_bytes(chunk)
-            except queue.Empty:
-                await asyncio.sleep(0.01)
-    except WebSocketDisconnect:
-        pass
-    except Exception as e:
-        print(f"WebSocket error: {e}")
-    finally:
-        inference_client.remove_stream_queue(q)
-        try:
-            await websocket.close()
-        except:
-            pass
-
-@app.get("/api/stream-sse")
-async def stream_sse():
-    if inference_client is None:
-        raise HTTPException(status_code=503, detail="Client not initialized")
-
-    async def event_generator():
-        import asyncio
-        last_frame = None
-        while True:
-            frame = inference_client.get_latest_frame()
-            if frame and frame != last_frame:
-                last_frame = frame
-                import base64
-                b64 = base64.b64encode(frame).decode()
-                yield f"data: image/jpeg;base64,{b64}\n\n"
-            await asyncio.sleep(0.1)
-
-    from fastapi.responses import StreamingResponse
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 if __name__ == "__main__":
     import uvicorn
