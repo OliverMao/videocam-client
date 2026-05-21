@@ -6,10 +6,10 @@ import StreamPlayer from './StreamPlayer.vue'
 
 const streamUrl = "http://192.168.153.50:8080/live/livestream.flv"
 
-import { 
-  Cigarette, 
+import {
+  Cigarette,
   Swords as Fight, // Lucide 中没有直接的 Fight，通常用 Swords 或 Fists 代替
-  Flame as Fire, 
+  Flame as Fire,
   PersonStanding as Fall
 } from 'lucide-vue-next'
 
@@ -82,12 +82,12 @@ onUnmounted(() => { if (intervalId) clearInterval(intervalId) })
           <h1>TeleAI 隐私相机演示系统</h1>
         </div>
       </div>
-      <div class="status-pill">
+      <!-- <div class="status-pill">
         <span class="pulse-dot" :class="streamStatus"></span>
         <span class="status-text">{{ statusLabel }}</span>
         <span class="divider">|</span>
         <span class="sys-id">SYS-04</span>
-      </div>
+      </div> -->
     </header>
 
     <div v-if="error && streamStatus !== 'playing'" class="tech-alert">
@@ -137,6 +137,22 @@ onUnmounted(() => { if (intervalId) clearInterval(intervalId) })
             <span class="header-tag">VIOLATION DET</span>
           </div>
           <div class="panel-content detection-grid">
+            <!-- <div v-for="item in detectionItems" :key="item.key" class="detection-card"
+              :class="{ active: 1==1 }">
+              <div class="card-top">
+                <component :is="item.iconComponent" class="card-icon-svg" />
+                <span class="card-label">{{ item.label }}</span>
+              </div>
+              <div class="card-bar">
+                <div class="bar-track">
+                  <div class="bar-fill" :class="{ active: 1==1 }"></div>
+                </div>
+                <span class="bar-label"
+                  :style="{ color: 1==1 ? 'var(--alert)' : 'var(--safe)' }">
+                  {{ 1==1 ? '⚠ 异常' : '✓ 正常' }}
+                </span>
+              </div>
+            </div> -->
             <div v-for="item in detectionItems" :key="item.key" class="detection-card"
               :class="{ active: violationKeys.has(item.key) }">
               <div class="card-top">
@@ -147,7 +163,8 @@ onUnmounted(() => { if (intervalId) clearInterval(intervalId) })
                 <div class="bar-track">
                   <div class="bar-fill" :class="{ active: violationKeys.has(item.key) }"></div>
                 </div>
-                <span class="bar-label" :style="{ color: violationKeys.has(item.key) ? 'var(--alert)' : 'var(--safe)' }">
+                <span class="bar-label"
+                  :style="{ color: violationKeys.has(item.key) ? 'var(--alert)' : 'var(--safe)' }">
                   {{ violationKeys.has(item.key) ? '⚠ 异常' : '✓ 正常' }}
                 </span>
               </div>
