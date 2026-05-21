@@ -16,27 +16,28 @@ import time
 APP_NAME = "FastAPI Simple Framework"
 APP_VERSION = "0.1.0"
 DEFAULT_PACKET_PATH = "packet.pt"
-DEFAULT_CHECKPOINT = "/workspace/s/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/jzy/models/Qwen3-VL-2B-Instruct"
+DEFAULT_CHECKPOINT = "/workspace/s/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/jzy/models/Qwen3-VL-8B-Instruct"
 TMP_DIR = "./tmpfile"
 # DEFAULT_TEXT = "图片中是否有违规行为，包括但不限于：1.吸烟 2.打架 3.赌博 4.其他违规行为。明确指出违规行为。输出如下：\n吸烟。\n如果图片中没有违规行为，输出如下：\n无。"
 
 DEFAULT_TEXT = """
-你的位置是在TeleAI的展厅中。
+图片中的场景是TeleAI的展厅。请详细分析图片内容，判断是否存在违规行为。违规行为包括但不限于：吸烟、打架、着火、摔倒、赌博以及其他违规行为。
 
-请分析图片内容，判断是否存在违规行为。违规行为包括但不限于：吸烟、打架、着火、摔倒、赌博以及其他违规行为。请先回答画面中一共有几个人，分别的动作，不包括隐私信息包括性别等，并附加一些简短的画面描述。回答的环境是TeleAI的展厅中。
+首先，统计画面中一共有几个人。对每一个人，描述其具体的动作、姿态、衣着特征（如颜色、款式、是否佩戴口罩等）以及所处的展厅位置，不要透露性别、年龄等隐私信息。
+然后，细致地描述整个展厅的环境，包括：可见的展品、屏幕内容、灯光、空间布局、地面情况等。
+将上述信息整合成一段连贯、详细的画面描述。
+不描述画面左上角和右上角的文字。
 
 严格按照以下JSON格式输出，不要添加任何其他文字或解释：
 {
-  "description": "描述",
+  "description": "详细的画面描述",
   "violations": ["违规行为"]
 }
 
-如果图中存在违规行为，在 violations 数组中列出所有发现的违规行为（如 ["吸烟"] 或 ["吸烟","打架"]）。如果没有任何违规行为，violations 应为空数组 []。
+如果存在违规行为，violations数组中列出所有发现的违规行为（如 ["吸烟"] 或 ["吸烟","打架"]）。如果没有任何违规行为，violations 应为空数组 []。
 
 示例输出：
-{"description": "一名男子在室内吸烟", "violations": ["吸烟"]}
-{"description": "一位老人摔倒在地", "violations": ["摔倒"]}
-{"description": "几个人在公园里散步", "violations": []}
+{"description": "展厅内有一人，身穿深色长袖上衣和长裤，正站在一块展示AI能力的曲面屏幕前，抬起右手指向屏幕上的数据图表。背景中还有一张圆形接待桌，上方悬挂着‘TeleAI’标识的灯箱，地面为浅灰色瓷砖，整体光线明亮。远处另一人身穿白色短袖，正坐在椅子上使用笔记本电脑。", "violations": []}
 """
 
 # 假设你的后端地址
