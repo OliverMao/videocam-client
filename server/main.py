@@ -7,10 +7,9 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from RTSPInferenceClient import RTSPInferenceClient
+from RTSPInferenceClientOpenAI import RTSPInferenceClient
 
 RTSP_URL = "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"
-INFER_URL = "http://116.238.240.2:31676/packet"
 
 class ServerResponse(BaseModel):
     result: str
@@ -28,7 +27,7 @@ inference_client: Optional[RTSPInferenceClient] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global inference_client
-    inference_client = RTSPInferenceClient(RTSP_URL, INFER_URL)
+    inference_client = RTSPInferenceClient(RTSP_URL)
     inference_client.start()
     print("Inference client started.")
     yield
@@ -51,12 +50,40 @@ async def get_show_client():
         raise HTTPException(status_code=503, detail="Client not initialized")
     if not inference_client.is_healthy:
         raise HTTPException(status_code=503, detail="Stream not ready yet")
-    result = inference_client.get_latest_result()
-    if result is None:
+    
+    raw = inference_client.get_latest_result()
+    if raw is None:
         return None
+
     try:
-        return ShowClientResponse(**result)
+        # ==========================================
+        # 核心修复：在这里将 raw 数据转换为 ShowClientResponse 需要的格式
+        # 请根据 print(raw) 的实际输出调整下面的 key 名称
+        # ==========================================
+        
+        # 如果 result 字段是 JSON 字符串，可能需要先解析
+        result_str = raw.get("result", "{}")
+        
+        mapped_data = {
+            # 1. 映射顶层缺失字段 (根据报错，这些字段在 raw 中不存在或名称不同)
+            "vision_split_time_ms": raw.get("vision_split_time_ms", 0.0), 
+            "image_processing_time_ms": raw.get("image_processing_time_ms", 0.0),
+            "total_api_time_ms": raw.get("total_time_ms", 0.0),  # ⚠️ 请确认 raw 中的实际 key
+            
+            # 2. 构造嵌套的 server_response 对象
+            "server_response": {
+                "result": result_str,
+                # ⚠️ 以下两个字段在 raw 中缺失，请确认实际 key 或提供默认值
+                "api_time_ms": raw.get("api_time_ms", 0.0),      
+                "inference_time_ms": raw.get("inference_time_ms", 0.0), 
+            }
+        }
+
+        return ShowClientResponse(**mapped_data)
+        
     except Exception as e:
+        # 建议打印原始数据以便调试字段名
+        print(f"[DEBUG] Raw data structure: {json.dumps(raw, indent=2, default=str)}")
         raise HTTPException(status_code=500, detail=f"Invalid result format: {e}")
 
 

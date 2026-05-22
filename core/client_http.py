@@ -26,7 +26,7 @@ DEFAULT_TEXT = """
 首先，统计画面中一共有几个人。对每一个人，描述其具体的动作、姿态、衣着特征（如颜色、款式、是否佩戴口罩等）以及所处的展厅位置，不要透露性别、年龄等隐私信息。
 然后，细致地描述整个展厅的环境，包括：可见的展品、屏幕内容、灯光、空间布局、地面情况等。
 将上述信息整合成一段连贯、详细的画面描述。
-不描述画面左上角和右上角的文字。
+不描述画面左上角和右上角的文字。因为是摄像头画面会包含当前摄像头的位置，时间等信息，这些信息不需要描述。不要显示“02.算法羽真_沙盘”这几个字。
 
 严格按照以下JSON格式输出，不要添加任何其他文字或解释：
 {
@@ -35,9 +35,6 @@ DEFAULT_TEXT = """
 }
 
 如果存在违规行为，violations数组中列出所有发现的违规行为（如 ["吸烟"] 或 ["吸烟","打架"]）。如果没有任何违规行为，violations 应为空数组 []。
-
-示例输出：
-{"description": "展厅内有一人，身穿深色长袖上衣和长裤，正站在一块展示AI能力的曲面屏幕前，抬起右手指向屏幕上的数据图表。背景中还有一张圆形接待桌，上方悬挂着‘TeleAI’标识的灯箱，地面为浅灰色瓷砖，整体光线明亮。远处另一人身穿白色短袖，正坐在椅子上使用笔记本电脑。", "violations": []}
 """
 
 # 假设你的后端地址
@@ -196,7 +193,7 @@ async def build_packet(
             response = await client.post(
                 SERVER_URL,
                 files={"file": ("packet.pt", buffer, "application/octet-stream")},
-                params={"max_new_tokens": 200},
+                params={"max_new_tokens": 500},
                 timeout=30.0 # 根据网络情况设置超时
             )
             
@@ -204,7 +201,7 @@ async def build_packet(
                 raise HTTPException(status_code=response.status_code, detail=f"后端推理失败: {response.text}")
             
             api_end_time = time.time()
-            print(f"Total API time (including backend inference): {(api_end_time - api_start_time)*1000:.2f} ms")
+            # print(f"Total API time (including backend inference): {(api_end_time - api_start_time)*1000:.2f} ms")
             # 直接返回后端的推理结果给客户端用户
             # {
             # "result": "吸烟。"

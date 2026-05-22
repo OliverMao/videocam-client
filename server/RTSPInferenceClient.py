@@ -1,12 +1,13 @@
 import io
 import time
 import threading
-import queue
-from typing import Optional, Dict, Any, List
-
+from typing import Optional, Dict, Any
 import cv2
 import httpx
 from PIL import Image
+from pathlib import Path
+
+from Loop.yolo import YOLODetector
 
 DEFAULT_INFER_URL = "http://116.238.240.2:31676/packet"
 DEFAULT_INTERVAL_SEC = 5.0
@@ -39,34 +40,6 @@ def _frame_to_jpeg_bytes(frame_bgr, quality: int = 70) -> bytes:
     return buffer.getvalue()
 
 
-class FrameBroadcaster:
-    def __init__(self):
-        self._subscribers: List[queue.Queue] = []
-        self._lock = threading.Lock()
-
-    def publish(self, data: bytes):
-        with self._lock:
-            dead = []
-            for q in self._subscribers:
-                try:
-                    q.put_nowait(data)
-                except queue.Full:
-                    dead.append(q)
-            for q in dead:
-                self._subscribers.remove(q)
-
-    def subscribe(self) -> queue.Queue:
-        q: queue.Queue = queue.Queue(maxsize=32)
-        with self._lock:
-            self._subscribers.append(q)
-        return q
-
-    def unsubscribe(self, q: queue.Queue):
-        with self._lock:
-            if q in self._subscribers:
-                self._subscribers.remove(q)
-
-
 class RTSPInferenceClient:
     def __init__(
         self,
@@ -75,24 +48,26 @@ class RTSPInferenceClient:
         interval_sec: float = DEFAULT_INTERVAL_SEC,
         frame_interval_sec: float = DEFAULT_FRAME_INTERVAL_SEC,
         max_fail_count: int = MAX_FAIL_COUNT,
+        save_dir: str = "./save",
     ):
         self.rtsp_url = rtsp_url
         self.infer_url = infer_url
         self.interval_sec = interval_sec
         self.frame_interval_sec = frame_interval_sec
+        self.save_dir = Path(save_dir)
         self.max_fail_count = max_fail_count
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+
+        self.detector = YOLODetector("./Loop/yolo26x.pt")
 
         self._cap: Optional[cv2.VideoCapture] = None
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
         self._latest_result: Optional[Dict[str, Any]] = None
-        self._latest_frame: Optional[bytes] = None
+        self._person_detected = False
         self._lock = threading.Lock()
         self._is_healthy = False
-        self._last_frame_time = 0.0
-
-        self._broadcaster = FrameBroadcaster()
 
     def _open_stream(self) -> bool:
         if self._cap is not None:
@@ -110,8 +85,12 @@ class RTSPInferenceClient:
             print("[FATAL] Cannot open stream, thread exiting.")
             return
 
-        last_infer_time = 0.0
+        last_yolo_time = 0.0
+        last_vlm_time = 0.0
         fail_count = 0
+        yolo_interval = 0.5          # 500ms
+        vlm_interval = self.interval_sec  # 默认5s
+        temp_yolo_path = self.save_dir / "yolo_temp.png"
 
         while not self._stop_event.is_set():
             now = time.time()
@@ -132,18 +111,24 @@ class RTSPInferenceClient:
             fail_count = 0
             self._is_healthy = True
 
-            if now - self._last_frame_time >= self.frame_interval_sec:
+            # ----- YOLO 检测，每 500ms 一次 -----
+            if now - last_yolo_time >= yolo_interval:
+                last_yolo_time = now
                 try:
-                    frame_bytes = _frame_to_jpeg_bytes(frame)
-                    with self._lock:
-                        self._latest_frame = frame_bytes
-                    self._last_frame_time = now
-                    self._broadcaster.publish(frame_bytes)
+                    # 保存当前帧为临时图片（BGR 格式，符合 OpenCV 读取习惯）
+                    cv2.imwrite(str(temp_yolo_path), frame)
+                    person_detected = self.detector.has_person(temp_yolo_path)
                 except Exception as e:
-                    print(f"Failed to save frame: {e}")
+                    print(f"YOLO detection error: {e}")
+                    person_detected = False
 
-            if now - last_infer_time >= self.interval_sec:
-                last_infer_time = now
+                with self._lock:
+                    self._person_detected = person_detected
+            else:
+                person_detected = self._person_detected
+
+            # ----- VLM 推理：有人 + 间隔 >= 5s -----
+            if person_detected and (now - last_vlm_time >= vlm_interval):
                 try:
                     image_bytes = _frame_to_png_bytes(frame)
                     response = httpx.post(
@@ -155,14 +140,22 @@ class RTSPInferenceClient:
                     result = response.json()
                     with self._lock:
                         self._latest_result = result
+                    last_vlm_time = now
+                    print("VLM inference completed.")
                 except Exception as exc:
                     print(f"Inference request failed: {exc}")
 
-            time.sleep(0.05)
+            # 降低 CPU 占用
+            time.sleep(0.01)
 
         if self._cap is not None:
             self._cap.release()
             self._cap = None
+        # 清理临时文件
+        try:
+            temp_yolo_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         print("Inference loop stopped.")
 
     def start(self):
@@ -184,15 +177,10 @@ class RTSPInferenceClient:
         with self._lock:
             return self._latest_result
 
-    def get_latest_frame(self) -> Optional[bytes]:
+    def get_person_detected(self) -> bool:
+        """返回最新 YOLO 检测是否有人"""
         with self._lock:
-            return self._latest_frame
-
-    def create_stream_queue(self) -> queue.Queue:
-        return self._broadcaster.subscribe()
-
-    def remove_stream_queue(self, q: queue.Queue):
-        self._broadcaster.unsubscribe(q)
+            return self._person_detected
 
     @property
     def is_healthy(self) -> bool:
