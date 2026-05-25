@@ -30,7 +30,7 @@ interface HistoryEntry {
 }
 const descriptionHistory = ref<HistoryEntry[]>([])
 let entryId = 0
-const MAX_HISTORY = 100
+const MAX_HISTORY = 20
 
 const detectionItems: { key: string; label: string; iconComponent: any }[] = [
   { key: '吸烟', label: '吸烟检测', iconComponent: Cigarette },
@@ -104,6 +104,8 @@ async function loadData() {
       const fullText = parsedResult.value.description
       console.log('New inference result:', fullText, 'Violations:', parsedResult.value.violations)
       const isDuplicate = descriptionHistory.value.length > 0 && descriptionHistory.value[0].description === fullText
+      // 由于现在是固定模板拼接，每次解析出的文案相同，移除 isDuplicate 拦截以保持列表持续追加
+      // const isDuplicate = false 
       
       if (!isDuplicate) {
         const now = new Date()
@@ -123,7 +125,7 @@ async function loadData() {
         }
 
         const targetEntry = descriptionHistory.value[0]
-        const duration = 3000 // 严格保证在3秒内完全打印完
+        const duration = 4000 // 严格保证在3秒内完全打印完
         const totalChars = fullText.length
         
         if (totalChars > 0) {
@@ -164,7 +166,7 @@ watch(descriptionHistory, () => {
 
 onMounted(() => {
   loadData()
-  intervalId = window.setInterval(loadData, 2000)
+  intervalId = window.setInterval(loadData, 5000)
   updateContainerHeight()
   window.addEventListener('resize', updateContainerHeight)
 })

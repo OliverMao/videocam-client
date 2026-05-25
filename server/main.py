@@ -68,12 +68,11 @@ async def get_show_client():
             # 1. 映射顶层缺失字段 (根据报错，这些字段在 raw 中不存在或名称不同)
             "vision_split_time_ms": raw.get("vision_split_time_ms", 0.0), 
             "image_processing_time_ms": raw.get("image_processing_time_ms", 0.0),
-            "total_api_time_ms": raw.get("total_time_ms", 0.0),  # ⚠️ 请确认 raw 中的实际 key
+            "total_api_time_ms": raw.get("total_time_ms", 0.0), 
             
             # 2. 构造嵌套的 server_response 对象
             "server_response": {
                 "result": result_str,
-                # ⚠️ 以下两个字段在 raw 中缺失，请确认实际 key 或提供默认值
                 "api_time_ms": raw.get("api_time_ms", 0.0),      
                 "inference_time_ms": raw.get("inference_time_ms", 0.0), 
             }

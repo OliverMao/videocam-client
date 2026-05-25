@@ -11,7 +11,6 @@ from openai import OpenAI
 import tempfile
 import os
 
-# 假设 Loop.yolo 存在且可用
 from Loop.yolo import YOLODetector
 
 # ================= 全局模式配置 =================
@@ -21,9 +20,9 @@ USE_VIDEO_MODE = False
 YOLO_DETECT_FPS = 3 
 # ================================================
 
-DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:31133/v1"
-DEFAULT_OPENAI_API_KEY = "ollama"
-DEFAULT_MODEL_NAME = "modelscope.cn/unsloth/Qwen3.5-2B-GGUF:latest"
+DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:32726/v1"
+DEFAULT_OPENAI_API_KEY = "vllm"
+DEFAULT_MODEL_NAME = "/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B"
 DEFAULT_INTERVAL_SEC = 5.0
 MAX_WIDTH = 1024
 MAX_FAIL_COUNT = 2
@@ -31,10 +30,20 @@ MAX_FAIL_COUNT = 2
 # 视频/图像采集配置
 REQUIRED_FRAMES = 4  # 固定采集4帧有效的“有人”帧
 
+# DEFAULT_SYSTEM_PROMPT = """
+# 图片中的场景是TeleAI的展厅。请详细分析视频内容，判断是否存在违规行为。违规行为包括但不限于：吸烟、打架、着火、摔倒四类违规行为。
+
+# 首先，统计画面中是否有人物存在。如果没有人，输出 {"has_person": 1, "violations": []}。如果有人物存在，输出 {"has_person": 1, "violations": [...]}，其中 violations 数组列出所有发现的违规行为（如 ["吸烟"] 或 ["吸烟","打架"]）。如果没有任何违规行为，violations 应为空数组 []。
+# 严格按照上述格式输出 JSON，不要添加任何多余的文本或解释。 /no_think
+
+# """
+
+# 因为yolo连续4帧检测到人物，所以VLM直接判断是否存在违规行为，不再让VLM判断是否有人，避免重复和矛盾的输出
+
 DEFAULT_SYSTEM_PROMPT = """
 图片中的场景是TeleAI的展厅。请详细分析视频内容，判断是否存在违规行为。违规行为包括但不限于：吸烟、打架、着火、摔倒四类违规行为。
 
-首先，统计画面中是否有人物存在。如果没有人，输出 {"has_person": 0, "violations": []}。如果有人物存在，输出 {"has_person": 1, "violations": [...]}，其中 violations 数组列出所有发现的违规行为（如 ["吸烟"] 或 ["吸烟","打架"]）。如果没有任何违规行为，violations 应为空数组 []。
+存在，输出 {"has_person": 1, "violations": [...]}，其中 violations 数组列出所有发现的违规行为（如 ["吸烟"] 或 ["吸烟","打架"]）。如果没有任何违规行为，violations 应为空数组 []。
 严格按照上述格式输出 JSON，不要添加任何多余的文本或解释。 /no_think
 
 """
@@ -161,9 +170,12 @@ class RTSPInferenceClient:
             response = self.openai_client.chat.completions.create(
                 model=self.model_name,
                 messages=messages,
-                max_tokens=512,
+                max_tokens=2048,
                 temperature=0.01,
+                response_format={"type": "json_object"}
             )
+            print(f"[VLM] VLM完成，")
+            print(f"[VLM] API响应: {response.choices[0].message.content.strip()}")  
             total_api_time_ms = (time.time() - t_total_start) * 1000
 
             content = response.choices[0].message.content.strip()
@@ -247,7 +259,8 @@ class RTSPInferenceClient:
                     frames_to_process = self._valid_frames_buffer[-REQUIRED_FRAMES:]
                     self._valid_frames_buffer = []
                     
-                    print(f"[TRIGGER] {REQUIRED_FRAMES} continuous frames collected. Blocking for VLM...")
+                    # print(f"[TRIGGER] {REQUIRED_FRAMES} continuous frames collected. Blocking for VLM...")  中文
+                    print(f"[验证]" f"{REQUIRED_FRAMES} 连续帧已收集，正在进行 VLM 推理...")
                     
                     # 【关键修改】同步阻塞调用，不再开启新线程
                     # 在 VLM 返回结果前，整个采集循环会暂停，天然符合 QPS=1 的限制
