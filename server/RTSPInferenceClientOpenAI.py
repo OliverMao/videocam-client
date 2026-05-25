@@ -38,6 +38,16 @@ REQUIRED_FRAMES = 4  # 固定采集4帧有效的“有人”帧
 
 # """
 
+DEFAULT_VERIFICATION_PROMPT = """
+你现在要核验上一轮输出是否与当前画面内容对应。
+
+请只根据当前提供的画面和上一轮输出结果进行判断，不要重复展开无关分析。
+如果上一轮结果与画面一致，输出 {"match": 1, "reason": "简要说明", "correct_result": <上一轮结果>}。
+如果上一轮结果与画面不一致，输出 {"match": 0, "reason": "简要说明", "correct_result": {"has_person": 1, "violations": [...]}}。
+严格按照上述格式输出 JSON，不要添加任何多余的文本或解释。 /no_think
+
+"""
+
 # 因为yolo连续4帧检测到人物，所以VLM直接判断是否存在违规行为，不再让VLM判断是否有人，避免重复和矛盾的输出
 
 DEFAULT_SYSTEM_PROMPT = """
@@ -85,6 +95,33 @@ def _frame_to_base64(frame: Any) -> str:
         return ""
 
 
+def _strip_code_fences(content: str) -> str:
+    content = content.strip()
+    if content.startswith("```json"):
+        content = content[7:]
+    elif content.startswith("```"):
+        content = content[3:]
+    if content.endswith("```"):
+        content = content[:-3]
+    return content.strip()
+
+
+def _parse_json_object(content: str) -> Optional[Dict[str, Any]]:
+    cleaned = _strip_code_fences(content)
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_bool_flag(value: Any) -> bool:
+    try:
+        return int(value) != 0
+    except (TypeError, ValueError):
+        return bool(value)
+
+
 class RTSPInferenceClient:
     def __init__(
         self,
@@ -130,9 +167,8 @@ class RTSPInferenceClient:
         print("[INFO] RTSP stream opened successfully")
         return True
 
-    def _build_vlm_messages(self, frames: List[Any]) -> tuple[List[Dict], float]:
-        t_start = time.time()
-        user_content = []
+    def _build_media_content(self, frames: List[Any]) -> List[Dict[str, Any]]:
+        user_content: List[Dict[str, Any]] = []
 
         if USE_VIDEO_MODE:
             video_b64 = _frames_to_video_base64(frames)
@@ -150,7 +186,12 @@ class RTSPInferenceClient:
                         "type": "image_url",
                         "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
                     })
-        
+
+        return user_content
+
+    def _build_vlm_messages(self, frames: List[Any]) -> tuple[List[Dict], float]:
+        t_start = time.time()
+        user_content = self._build_media_content(frames)
         user_content.append({"type": "text", "text": "请分析这段监控内容。"})
         messages = [
             {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
@@ -158,43 +199,63 @@ class RTSPInferenceClient:
         ]
         return messages, (time.time() - t_start) * 1000
 
+    def _build_verification_messages(self, frames: List[Any], initial_result_text: str) -> tuple[List[Dict], float]:
+        t_start = time.time()
+        user_content = self._build_media_content(frames)
+        user_content.append({
+            "type": "text",
+            "text": f"上一轮输出结果如下，请核验它是否与当前画面对应：\n{initial_result_text}\n\n请只输出核验 JSON。"
+        })
+        messages = [
+            {"role": "system", "content": DEFAULT_VERIFICATION_PROMPT},
+            {"role": "user", "content": user_content}
+        ]
+        return messages, (time.time() - t_start) * 1000
+
+    def _call_vlm(self, messages: List[Dict[str, Any]]) -> tuple[str, float]:
+        t_total_start = time.time()
+        response = self.openai_client.chat.completions.create(
+            model=self.model_name,
+            messages=messages,
+            max_tokens=2048,
+            temperature=0.01,
+            response_format={"type": "json_object"}
+        )
+        content = response.choices[0].message.content.strip()
+        return content, (time.time() - t_total_start) * 1000
+
     def _process_vlm_inference(self, frames: List[Any]):
         """同步阻塞执行 VLM 推理，适配 QPS=1 的场景"""
         if not frames:
             return
         try:
-            t_total_start = time.time()
             messages, media_processing_time_ms = self._build_vlm_messages(frames)
-
-            # 同步阻塞等待 API 返回
-            response = self.openai_client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                max_tokens=2048,
-                temperature=0.01,
-                response_format={"type": "json_object"}
-            )
+            content, first_api_time_ms = self._call_vlm(messages)
             print(f"[VLM] VLM完成，")
-            print(f"[VLM] API响应: {response.choices[0].message.content.strip()}")  
-            total_api_time_ms = (time.time() - t_total_start) * 1000
+            print(f"[VLM] API响应: {content}")
 
-            content = response.choices[0].message.content.strip()
-            if content.startswith("```json"): content = content[7:]
-            if content.endswith("```"): content = content[:-3]
-            
-            try:
-                model_json = json.loads(content.strip())
-                result_text = json.dumps(model_json, ensure_ascii=False) \
-                    if "description" in model_json and "violations" in model_json \
-                    else model_json.get("result", content)
-            except json.JSONDecodeError:
-                result_text = content
+            model_json = _parse_json_object(content)
+            result_text = json.dumps(model_json, ensure_ascii=False) if model_json is not None else _strip_code_fences(content)
+
+            verification_messages, verification_media_processing_time_ms = self._build_verification_messages(frames, result_text)
+            verification_content, verification_api_time_ms = self._call_vlm(verification_messages)
+            print(f"[VLM] 复核响应: {verification_content}")
+
+            verification_json = _parse_json_object(verification_content)
+            verification_text = json.dumps(verification_json, ensure_ascii=False) if verification_json is not None else _strip_code_fences(verification_content)
+
+            verification_match = _parse_bool_flag(verification_json.get("match", 0)) if verification_json is not None else False
+            if not verification_match:
+                print(f"[VLM MISMATCH] 初次结果与画面不一致，丢弃本次结果。verification={verification_text}")
+                return
 
             final_result = {
                 "mode": "video" if USE_VIDEO_MODE else "image",
-                "total_api_time_ms": total_api_time_ms,
+                "api_time_ms": first_api_time_ms,
+                "total_api_time_ms": first_api_time_ms + verification_api_time_ms,
                 "server_response": {"result": result_text},
                 "media_processing_time_ms": media_processing_time_ms,
+                "verification_media_processing_time_ms": verification_media_processing_time_ms,
                 "frame_count": len(frames),
                 "capture_fps": YOLO_DETECT_FPS
             }
@@ -202,7 +263,7 @@ class RTSPInferenceClient:
             with self._lock:
                 self._latest_result = final_result
             print(f"[VLM RESULT] {final_result}")
-            print(f"[VLM DONE] Frames: {len(frames)}, Total: {total_api_time_ms:.0f}ms")
+            print(f"[VLM DONE] Frames: {len(frames)}, Total: {first_api_time_ms + verification_api_time_ms:.0f}ms")
             
 
         except Exception as exc:
@@ -268,6 +329,20 @@ class RTSPInferenceClient:
             else:
                 if self._valid_frames_buffer:
                     self._valid_frames_buffer = []
+                
+                # 更新状态为无人
+                empty_result = {
+                    "mode": "video" if USE_VIDEO_MODE else "image",
+                    "api_time_ms": 0.0,
+                    "total_api_time_ms": 0.0,
+                    "server_response": {"result": '{"has_person": 0, "violations": []}'},
+                    "media_processing_time_ms": 0.0,
+                    "verification_media_processing_time_ms": 0.0,
+                    "frame_count": 0,
+                    "capture_fps": YOLO_DETECT_FPS
+                }
+                with self._lock:
+                    self._latest_result = empty_result
 
             time.sleep(0.001)
 

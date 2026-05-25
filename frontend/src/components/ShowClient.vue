@@ -125,7 +125,7 @@ async function loadData() {
         }
 
         const targetEntry = descriptionHistory.value[0]
-        const duration = 4000 // 严格保证在3秒内完全打印完
+        const duration = 3500 // 严格保证在3.5秒内完全打印完
         const totalChars = fullText.length
         
         if (totalChars > 0) {
@@ -941,17 +941,12 @@ onUnmounted(() => {
   }
 }
 
+.desc-content {
+  scrollbar-width: none; /* Firefox */
+}
+
 .desc-content::-webkit-scrollbar {
-  width: 4px;
-}
-
-.desc-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.desc-content::-webkit-scrollbar-thumb {
-  background: var(--border-tech);
-  border-radius: 2px;
+  display: none; /* Chrome, Safari, Edge */
 }
 
 .detection-grid {
