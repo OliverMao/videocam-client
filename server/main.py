@@ -44,7 +44,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/api/show-client", response_model=Optional[ShowClientResponse])
+# @app.get("/api/show-client", response_model=Optional[ShowClientResponse])
+@app.get("/api/show-client")
 async def get_show_client():
     if inference_client is None:
         raise HTTPException(status_code=503, detail="Client not initialized")
@@ -53,8 +54,17 @@ async def get_show_client():
     
     raw = inference_client.get_latest_result()
     if raw is None:
-        return None
-
+        return {
+            "mode": "image",
+            "total_api_time_ms": 4305.08279800415,
+            "server_response": {
+                "result": "\n{\"has_person\": 0, \"violations\": []}\n"
+            },
+            "media_processing_time_ms": 91.82310104370117,
+            "frame_count": 4,
+            "capture_fps": 3
+            }
+    return raw
     try:
         # ==========================================
         # 核心修复：在这里将 raw 数据转换为 ShowClientResponse 需要的格式
@@ -68,11 +78,12 @@ async def get_show_client():
             # 1. 映射顶层缺失字段 (根据报错，这些字段在 raw 中不存在或名称不同)
             "vision_split_time_ms": raw.get("vision_split_time_ms", 0.0), 
             "image_processing_time_ms": raw.get("image_processing_time_ms", 0.0),
-            "total_api_time_ms": raw.get("total_time_ms", 0.0), 
+            "total_api_time_ms": raw.get("total_time_ms", 0.0),  # ⚠️ 请确认 raw 中的实际 key
             
             # 2. 构造嵌套的 server_response 对象
             "server_response": {
                 "result": result_str,
+                # ⚠️ 以下两个字段在 raw 中缺失，请确认实际 key 或提供默认值
                 "api_time_ms": raw.get("api_time_ms", 0.0),      
                 "inference_time_ms": raw.get("inference_time_ms", 0.0), 
             }

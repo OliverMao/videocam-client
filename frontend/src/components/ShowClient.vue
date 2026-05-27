@@ -4,7 +4,7 @@ import { fetchShowClientData, parseInferenceResult, getWebSocketUrl } from '../a
 import type { ShowClientData, InferenceResult } from '../api/types'
 import StreamPlayer from './StreamPlayer.vue'
 
-const streamUrl = "http://192.168.153.50:8080/live/livestream.flv"
+const streamUrl = import.meta.env.VITE_STREAM_URL || "http://192.168.151.158:8081/live/livestream.flv"
 
 import {
   Cigarette,
@@ -35,20 +35,12 @@ const MAX_HISTORY = 20
 const detectionItems: { key: string; label: string; iconComponent: any }[] = [
   { key: '吸烟', label: '吸烟检测', iconComponent: Cigarette },
   { key: '打架', label: '冲突识别', iconComponent: Fight },
-  { key: '着火', label: '火情预警', iconComponent: Fire },
   { key: '摔倒', label: '跌倒监测', iconComponent: Fall },
 ]
 
 const violationKeys = computed(() => new Set(parsedResult.value?.violations ?? []))
 
-const statusLabel = computed(() => {
-  switch (streamStatus.value) {
-    case 'playing': return '已连接'
-    case 'connecting': return '链路建立中...'
-    case 'error': return '信号中断'
-    default: return '等待数据流'
-  }
-})
+
 
 let intervalId: number | null = null
 
@@ -93,7 +85,12 @@ function updateContainerHeight() {
 }
 
 // --- Data loading ---
+let lastAddTime = 0
+let lastHasPerson: boolean | null = null
+let lastViolationsStr = ''
+
 async function loadData() {
+  if (loading.value) return // 防止500ms轮询时上一次请求还未返回造成的并发堆积
   try {
     loading.value = true
     error.value = null
@@ -102,12 +99,22 @@ async function loadData() {
     parsedResult.value = parseInferenceResult(result.server_response.result)
     if (parsedResult.value?.description) {
       const fullText = parsedResult.value.description
-      console.log('New inference result:', fullText, 'Violations:', parsedResult.value.violations)
-      const isDuplicate = descriptionHistory.value.length > 0 && descriptionHistory.value[0].description === fullText
-      // 由于现在是固定模板拼接，每次解析出的文案相同，移除 isDuplicate 拦截以保持列表持续追加
-      // const isDuplicate = false 
-      
-      if (!isDuplicate) {
+      const currentViolationsStr = (parsedResult.value.violations || []).join(',')
+      const currentHasPerson = parsedResult.value.hasPerson
+
+      const nowMs = Date.now()
+      const timeSinceLastAdd = nowMs - lastAddTime
+
+      // 仅当“是否有人”或者“预警状态”发生改变时认为是有效变化
+      const isChanged = currentHasPerson !== lastHasPerson || currentViolationsStr !== lastViolationsStr
+      const isTimeout = timeSinceLastAdd >= 3000
+
+      if (isChanged || isTimeout) {
+        lastAddTime = nowMs
+        lastHasPerson = currentHasPerson
+        lastViolationsStr = currentViolationsStr
+        console.log('New inference result:', fullText, 'Violations:', parsedResult.value.violations)
+        
         const now = new Date()
         const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false }) + '.' + String(now.getMilliseconds()).padStart(3, '0')
         
@@ -125,7 +132,7 @@ async function loadData() {
         }
 
         const targetEntry = descriptionHistory.value[0]
-        const duration = 3500 // 严格保证在3.5秒内完全打印完
+        const duration = 1000 // 严格保证在3.5秒内完全打印完
         const totalChars = fullText.length
         
         if (totalChars > 0) {
@@ -166,7 +173,7 @@ watch(descriptionHistory, () => {
 
 onMounted(() => {
   loadData()
-  intervalId = window.setInterval(loadData, 5000)
+  intervalId = window.setInterval(loadData, 1000)
   updateContainerHeight()
   window.addEventListener('resize', updateContainerHeight)
 })

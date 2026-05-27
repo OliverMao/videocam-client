@@ -18,12 +18,15 @@ USE_VIDEO_MODE = False
 
 # YOLO 检测频率 (Hz)
 YOLO_DETECT_FPS = 3 
+
+# 是否开启两阶段VLM复核
+ENABLE_VLM_VERIFICATION = False
 # ================================================
 
 DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:32726/v1"
 DEFAULT_OPENAI_API_KEY = "vllm"
 DEFAULT_MODEL_NAME = "/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B"
-DEFAULT_INTERVAL_SEC = 5.0
+DEFAULT_INTERVAL_SEC = 3.0
 MAX_WIDTH = 1024
 MAX_FAIL_COUNT = 2
 
@@ -51,8 +54,8 @@ DEFAULT_VERIFICATION_PROMPT = """
 # 因为yolo连续4帧检测到人物，所以VLM直接判断是否存在违规行为，不再让VLM判断是否有人，避免重复和矛盾的输出
 
 DEFAULT_SYSTEM_PROMPT = """
-图片中的场景是TeleAI的展厅。请详细分析视频内容，判断是否存在违规行为。违规行为包括但不限于：吸烟、打架、着火、摔倒四类违规行为。
-
+图片中的场景是TeleAI的展厅。请详细分析视频内容，判断是否存在违规行为。违规行为包括但不限于：吸烟、打架、摔倒三类违规行为。
+如果摆出类似抽烟的姿势我们也认为是抽烟，如果摆出打架动作而没有真的在打架也认为是打架。只要人坐在地上，我们也认为是摔倒。
 存在，输出 {"has_person": 1, "violations": [...]}，其中 violations 数组列出所有发现的违规行为（如 ["吸烟"] 或 ["吸烟","打架"]）。如果没有任何违规行为，violations 应为空数组 []。
 严格按照上述格式输出 JSON，不要添加任何多余的文本或解释。 /no_think
 
@@ -237,17 +240,21 @@ class RTSPInferenceClient:
             model_json = _parse_json_object(content)
             result_text = json.dumps(model_json, ensure_ascii=False) if model_json is not None else _strip_code_fences(content)
 
-            verification_messages, verification_media_processing_time_ms = self._build_verification_messages(frames, result_text)
-            verification_content, verification_api_time_ms = self._call_vlm(verification_messages)
-            print(f"[VLM] 复核响应: {verification_content}")
+            verification_api_time_ms = 0.0
+            verification_media_processing_time_ms = 0.0
 
-            verification_json = _parse_json_object(verification_content)
-            verification_text = json.dumps(verification_json, ensure_ascii=False) if verification_json is not None else _strip_code_fences(verification_content)
+            if ENABLE_VLM_VERIFICATION:
+                verification_messages, verification_media_processing_time_ms = self._build_verification_messages(frames, result_text)
+                verification_content, verification_api_time_ms = self._call_vlm(verification_messages)
+                print(f"[VLM] 复核响应: {verification_content}")
 
-            verification_match = _parse_bool_flag(verification_json.get("match", 0)) if verification_json is not None else False
-            if not verification_match:
-                print(f"[VLM MISMATCH] 初次结果与画面不一致，丢弃本次结果。verification={verification_text}")
-                return
+                verification_json = _parse_json_object(verification_content)
+                verification_text = json.dumps(verification_json, ensure_ascii=False) if verification_json is not None else _strip_code_fences(verification_content)
+
+                verification_match = _parse_bool_flag(verification_json.get("match", 0)) if verification_json is not None else False
+                if not verification_match:
+                    print(f"[VLM MISMATCH] 初次结果与画面不一致，丢弃本次结果。verification={verification_text}")
+                    return
 
             final_result = {
                 "mode": "video" if USE_VIDEO_MODE else "image",
@@ -267,6 +274,18 @@ class RTSPInferenceClient:
             
 
         except Exception as exc:
+            empty_result = {
+                "mode": "video" if USE_VIDEO_MODE else "image",
+                "api_time_ms": 0.0,
+                "total_api_time_ms": 0.0,
+                "server_response": {"result": '{"has_person": -1, "violations": []}'},
+                "media_processing_time_ms": 0.0,
+                "verification_media_processing_time_ms": 0.0,
+                "frame_count": 0,
+                "capture_fps": YOLO_DETECT_FPS
+            }
+            with self._lock:
+                self._latest_result = empty_result
             print(f"[VLM ERROR] Inference failed: {exc}")
 
     def _inference_loop(self):
@@ -290,6 +309,14 @@ class RTSPInferenceClient:
                     fail_count = 0
                     self._valid_frames_buffer = []
                 continue
+
+            # 从左侧裁剪0-2000px，然后缩放至 MAX_WIDTH
+            h, w = frame.shape[:2]
+            crop_w = min(w, 2000)
+            if crop_w > 0:
+                frame = frame[:, 0:crop_w]
+                new_h = int(h * (MAX_WIDTH / crop_w))
+                frame = cv2.resize(frame, (MAX_WIDTH, new_h))
 
             fail_count = 0
             self._is_healthy = True

@@ -7,6 +7,7 @@ export interface ServerResponse {
 export interface InferenceResult {
   description: string
   violations: string[]
+  hasPerson: boolean
 }
 
 export interface ViolationInfo {

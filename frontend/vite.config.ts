@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/live': {
-        target: 'http://192.168.153.50:8080',
+        target: 'http://192.168.151.158:8081',
         changeOrigin: true,
         // ws: true, // 如果是 WebSocket 需要开启
       }

@@ -3,11 +3,11 @@ import { ref } from 'vue'
 import type { ShowClientData, InferenceResult, ViolationInfo } from './types'
 
 const api = axios.create({
-  baseURL: 'http://192.168.153.50:28001/api',
+  baseURL: 'http://192.168.151.158:28001/api',
   timeout: 30000
 })
 
-const BASE_URL = 'http://192.168.153.50:28001/api'
+const BASE_URL = 'http://192.168.151.158:28001/api'
 
 const violationConfig: Record<string, ViolationInfo> = {
   '吸烟': { label: '吸烟', icon: '🚬', color: '#f97316', bgColor: '#7c2d12', severity: 'medium' },
@@ -78,14 +78,19 @@ export function parseInferenceResult(resultStr: string): InferenceResult {
     // const d_prefix = 随机从descriptionList中选取一个元素
     const randomIndex = Math.floor(Math.random() * descriptionList.value.length)
     const d_prefix = descriptionList.value[randomIndex]
+
+    if (parsed.has_person.toString() == '-1') {
+      return { description: d_prefix, violations: [], hasPerson: false }
+    }
     const description = `${d_prefix}目前，展厅${hasPerson}人，且其预警识别状态为：${violationsStr}。`
 
     return {
       description,
-      violations: parsed.violations || []
+      violations: parsed.violations || [],
+      hasPerson: parsed.has_person === 1
     }
   } catch {
-    return { description: resultStr, violations: [] }
+    return { description: resultStr, violations: [], hasPerson: false }
   }
 }
 
