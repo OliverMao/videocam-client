@@ -18,7 +18,8 @@ services:
     ports:
       - "28001:28001"
     environment:
-      - RTSP_URL=rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101
+      # 如果 app 需要读取流，建议指向 SRS 的 RTMP/HTTP-FLV 地址
+      - RTSP_URL=rtmp://srs:1935/live/livestream 
       - INFER_URL=http://116.238.240.2:31676/packet
     volumes:
       - ./:/app
@@ -29,16 +30,38 @@ services:
   ffmpeg-stream:
     image: linuxserver/ffmpeg
     container_name: ffmpeg-stream
-    # 使用数组格式，避免 YAML 多行字符串解析问题
+    # 【关键】映射所有可能的视频设备，或者只映射变量指定的那个
+    # 为了简单起见，这里映射两个常用设备，容器内根据变量选择使用哪一个
+    devices:
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+    
+    # 【关键】使用环境变量传入配置
+    environment:
+      # 默认使用板载摄像头 (/dev/video0)
+      # 如果要切换为 USB 摄像头，将此值改为 /dev/video1
+      - CAMERA_DEVICE=${CAMERA_DEVICE:-/dev/video0}
+      
+      # 输入格式：板载通常用 mjpeg 或 yuyv422，USB 通常自动协商或用 mjpeg
+      - INPUT_FORMAT=${INPUT_FORMAT:-mjpeg}
+      
+      # 分辨率
+      - VIDEO_SIZE=${VIDEO_SIZE:-1920x1080}
+      
+      # 帧率
+      - FRAMERATE=${FRAMERATE:-30}
+
     command:
-      - "-rtsp_transport"
-      - "tcp"
-      - "-timeout"
-      - "5000000"
+      - "-f"
+      - "v4l2"
+      - "-input_format"
+      - "${INPUT_FORMAT:-mjpeg}"
+      - "-video_size"
+      - "${VIDEO_SIZE:-1920x1080}"
+      - "-framerate"
+      - "${FRAMERATE:-30}"
       - "-i"
-      - "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"
-      - "-vf"
-      - "crop=2000:ih:0:0"
+      - "${CAMERA_DEVICE:-/dev/video0}"  # <--- 这里使用变量
       - "-c:v"
       - "libx264"
       - "-preset"
@@ -54,10 +77,11 @@ services:
       - "-f"
       - "flv"
       - "-muxdelay"
-      - "5"
+      - "0"
       - "-muxpreload"
-      - "5"
+      - "0"
       - "rtmp://srs:1935/live/livestream"
+    
     depends_on:
       - srs
     restart: unless-stopped
@@ -74,6 +98,8 @@ services:
     volumes:
       - ../frontend:/app
       - /app/node_modules
+    ports:
+      - "4173:4173"
     environment:
       - VITE_STREAM_URL=http://192.168.152.6:8081/live/livestream.flv
       - VITE_API_HOST=http://192.168.152.6:28001
@@ -81,9 +107,3 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
-
-  
-# ffmpeg -rtsp_transport tcp -i "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101" -c copy -f flv rtmp://localhost:1935/live/livestream
-
-
-# ffmpeg -rtsp_transport tcp  -i "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"  -c copy  -f flv   -muxdelay 3   -muxpreload 3  rtmp://localhost:1935/live/livestream

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { fetchShowClientData, parseInferenceResult, getWebSocketUrl } from '../api'
+import { fetchShowClientData, parseInferenceResult, getWebSocketUrl } from '../api/index.js'
 import type { ShowClientData, InferenceResult } from '../api/types'
 import StreamPlayer from './StreamPlayer.vue'
 
-const streamUrl = import.meta.env.VITE_STREAM_URL || "http://192.168.151.158:8081/live/livestream.flv"
+const streamUrl = import.meta.env.VITE_STREAM_URL 
 
 import {
   Cigarette,

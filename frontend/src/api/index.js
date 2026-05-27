@@ -1,15 +1,14 @@
 import axios from 'axios'
 import { ref } from 'vue'
-import type { ShowClientData, InferenceResult, ViolationInfo } from './types'
 
+const BASE_URL = import.meta.env.VITE_API_HOST
 const api = axios.create({
-  baseURL: 'http://192.168.151.158:28001/api',
+  baseURL: BASE_URL,
   timeout: 30000
 })
 
-const BASE_URL = 'http://192.168.151.158:28001/api'
 
-const violationConfig: Record<string, ViolationInfo> = {
+const violationConfig= {
   '吸烟': { label: '吸烟', icon: '🚬', color: '#f97316', bgColor: '#7c2d12', severity: 'medium' },
   '抽烟': { label: '抽烟', icon: '🚬', color: '#f97316', bgColor: '#7c2d12', severity: 'medium' },
   '打架': { label: '打架', icon: '⚔', color: '#ef4444', bgColor: '#7f1d1d', severity: 'high' },
@@ -48,7 +47,7 @@ export const descriptionList = ref([
   '展厅整体呈现出宽敞明亮的效果，空间布局开阔，地面为浅灰色。内部设有多个白色的立式交互式触摸屏展台，背景墙上安装着数块大型显示屏，让整个环境充满科技质感。',
 ])
 
-export function getViolationInfo(violation: string): ViolationInfo {
+export function getViolationInfo(violation) {
   return violationConfig[violation] || {
     label: violation,
     icon: '⚠',
@@ -58,11 +57,11 @@ export function getViolationInfo(violation: string): ViolationInfo {
   }
 }
 
-export function fetchShowClientData(): Promise<ShowClientData> {
+export function fetchShowClientData() {
   return api.get('/show-client').then(res => res.data)
 }
 
-export function parseInferenceResult(resultStr: string): InferenceResult {
+export function parseInferenceResult(resultStr) {
   if (!resultStr) return { description: '', violations: [] }
   try {
     const jsonMatch = resultStr.match(/```json\n([\s\S]*?)\n```/)
@@ -94,11 +93,11 @@ export function parseInferenceResult(resultStr: string): InferenceResult {
   }
 }
 
-export function getStreamUrl(): string {
+export function getStreamUrl() {
   return `${BASE_URL}/stream-sse`
 }
 
-export function getWebSocketUrl(): string {
+export function getWebSocketUrl() {
   const url = new URL(BASE_URL)
   const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${wsProtocol}//${url.host}/api/ws/stream`
