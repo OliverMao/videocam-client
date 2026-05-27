@@ -7,9 +7,15 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from RTSPInferenceClientOpenAI import RTSPInferenceClient
+JETSON = True  # 是否在 Jetson 上运行
+if JETSON:
+    from RTSPInferenceClientOpenAIJetson import RTSPInferenceClient
+    RTSP_URL = "http://srs:8080/live/livestream.flv"  # Jetson 上使用 v4l2rtspserver 输出的本地设备路径
+else:
+    from RTSPInferenceClientOpenAI import RTSPInferenceClient
+    RTSP_URL = "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"
 
-RTSP_URL = "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"
+
 
 class ServerResponse(BaseModel):
     result: str
