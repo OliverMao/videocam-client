@@ -7,7 +7,7 @@ services:
     ports:
       - "1935:1935"
       - "1985:1985"
-      - "8080:8080"
+      - "8081:8080"
     stdin_open: true
     tty: true
     restart: unless-stopped
@@ -29,17 +29,43 @@ services:
   ffmpeg-stream:
     image: linuxserver/ffmpeg
     container_name: ffmpeg-stream
-    # 不要覆盖 entrypoint！直接用 command 传 ffmpeg 参数
-    command: >
-      -rtsp_transport tcp 
-      -i rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101 
-      -vf "crop=2000:ih:0:0" 
-      -c:v libx264 -preset fast -tune zerolatency -b:v 4M 
-      -c:a aac -b:a 128k 
-      -f flv rtmp://srs:1935/live/livestream
+    # 使用数组格式，避免 YAML 多行字符串解析问题
+    command:
+      - "-rtsp_transport"
+      - "tcp"
+      - "-timeout"
+      - "5000000"
+      - "-i"
+      - "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"
+      - "-vf"
+      - "crop=2000:ih:0:0"
+      - "-c:v"
+      - "libx264"
+      - "-preset"
+      - "fast"
+      - "-tune"
+      - "zerolatency"
+      - "-b:v"
+      - "4M"
+      - "-c:a"
+      - "aac"
+      - "-b:a"
+      - "128k"
+      - "-f"
+      - "flv"
+      - "-muxdelay"
+      - "5"
+      - "-muxpreload"
+      - "5"
+      - "rtmp://srs:1935/live/livestream"
     depends_on:
       - srs
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
 
   frontend-dev:
     image: node:22
@@ -57,3 +83,6 @@ services:
 
   
 # ffmpeg -rtsp_transport tcp -i "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101" -c copy -f flv rtmp://localhost:1935/live/livestream
+
+
+# ffmpeg -rtsp_transport tcp  -i "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"  -c copy  -f flv   -muxdelay 3   -muxpreload 3  rtmp://localhost:1935/live/livestream

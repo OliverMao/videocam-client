@@ -33,13 +33,13 @@ let entryId = 0
 const MAX_HISTORY = 20
 
 const detectionItems: { key: string; label: string; iconComponent: any }[] = [
-  { key: '吸烟', label: '吸烟检测', iconComponent: Cigarette },
+  { key: '吸烟', label: '吸烟监测', iconComponent: Cigarette },
   { key: '打架', label: '冲突识别', iconComponent: Fight },
   { key: '摔倒', label: '跌倒监测', iconComponent: Fall },
 ]
 
 const violationKeys = computed(() => new Set(parsedResult.value?.violations ?? []))
-
+// const violationKeys = new Set(["吸烟", "摔倒"])
 
 
 let intervalId: number | null = null
@@ -288,37 +288,20 @@ onUnmounted(() => {
             <span class="header-tag">VIOLATION DET</span>
           </div>
           <div class="panel-content detection-grid">
-            <!-- <div v-for="item in detectionItems" :key="item.key" class="detection-card"
-              :class="{ active: 1==1 }">
-              <div class="card-top">
-                <component :is="item.iconComponent" class="card-icon-svg" />
-                <span class="card-label">{{ item.label }}</span>
-              </div>
-              <div class="card-bar">
-                <div class="bar-track">
-                  <div class="bar-fill" :class="{ active: 1==1 }"></div>
-                </div>
-                <span class="bar-label"
-                  :style="{ color: 1==1 ? 'var(--alert)' : 'var(--safe)' }">
-                  {{ 1==1 ? '⚠ 异常' : '✓ 正常' }}
-                </span>
-              </div>
-            </div> -->
             <div v-for="item in detectionItems" :key="item.key" class="detection-card"
               :class="{ active: violationKeys.has(item.key) }">
               <div class="card-top">
                 <component :is="item.iconComponent" class="card-icon-svg" />
                 <span class="card-label">{{ item.label }}</span>
               </div>
-              <div class="card-bar">
-                <div class="bar-track">
-                  <div class="bar-fill" :class="{ active: violationKeys.has(item.key) }"></div>
-                </div>
-                <span class="bar-label"
-                  :style="{ color: violationKeys.has(item.key) ? 'var(--alert)' : 'var(--safe)' }">
-                  {{ violationKeys.has(item.key) ? '⚠ 异常' : '✓ 正常' }}
+              <div class="card-status-badge" :class="{ active: violationKeys.has(item.key) }">
+                <span class="status-dot"></span>
+                <span class="status-text">
+                  {{ violationKeys.has(item.key) ? '监测到异常' : '正常' }}
                 </span>
               </div>
+              <div v-if="violationKeys.has(item.key)" class="alert-watermark">WARN</div>
+              <div v-if="violationKeys.has(item.key)" class="scan-line"></div>
             </div>
           </div>
         </div>
@@ -729,14 +712,15 @@ onUnmounted(() => {
 }
 
 .card-icon-svg {
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   stroke: var(--accent-cyan);
-  transition: stroke 0.3s ease;
+  transition: stroke 0.3s ease, filter 0.3s ease;
 }
 
 .detection-card.active .card-icon-svg {
   stroke: var(--alert);
+  filter: drop-shadow(0 0 6px rgba(244, 63, 94, 0.6));
 }
 
 
@@ -913,11 +897,12 @@ onUnmounted(() => {
 
 .violation-tag {
   display: inline-block;
-  padding: 0.1rem 0.5rem;
-  font-size: 0.75rem;
-  font-family: var(--font-tech);
+  padding: 0.2rem 0.6rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: var(--font-ui);
   color: var(--alert);
-  background: rgba(244, 63, 94, 0.12);
+  background: rgba(244, 63, 94, 0.08);
   border: 1px solid rgba(244, 63, 94, 0.3);
   border-radius: 0.25rem;
 }
@@ -959,97 +944,163 @@ onUnmounted(() => {
 .detection-grid {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 1.25rem;
 }
 
 .detection-card {
   background: rgba(5, 10, 40, 0.6);
   border: 1px solid rgba(99, 102, 241, 0.2);
-  border-radius: 0.5rem;
-  padding: 0.75rem;
+  border-radius: 0.75rem;
+  padding: 1.25rem;
   transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
 }
 
-.detection-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 0px;
-  height: 100%;
-  background: var(--accent-blue);
-  opacity: 0.5;
-  transition: all 0.3s ease;
+
+@property --border-angle {
+  syntax: "<angle>";
+  inherits: true;
+  initial-value: 0deg;
 }
 
 .detection-card.active {
-  border-color: rgba(244, 63, 94, 0.5);
-  background: rgba(30, 10, 40, 0.4);
-  box-shadow: 0 0 20px rgba(244, 63, 94, 0.1);
+  background:
+    radial-gradient(circle at 90% 10%, rgba(244, 63, 94, 0.15) 0%, transparent 60%),
+    repeating-linear-gradient(45deg, rgba(244, 63, 94, 0.03) 0, rgba(244, 63, 94, 0.03) 1px, transparent 1px, transparent 6px),
+    linear-gradient(135deg, rgba(244, 63, 94, 0.1) 0%, rgba(5, 10, 40, 0.8) 100%);
+  border-color: transparent;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+}
+
+.alert-watermark {
+  position: absolute;
+  right: -5px;
+  bottom: -15px;
+  font-size: 5rem;
+  font-family: var(--font-tech);
+  font-weight: 900;
+  font-style: italic;
+  color: rgba(244, 63, 94, 0.2);
+  pointer-events: none;
+  z-index: 0;
+  user-select: none;
+  letter-spacing: -2px;
+}
+
+/* .scan-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(244, 63, 94, 0.6), transparent);
+  animation: cardScan 2.5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 2;
+} */
+
+@keyframes cardScan {
+  0% { transform: translateY(-10px); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(120px); opacity: 0; }
 }
 
 .detection-card.active::before {
   background: var(--alert);
-  opacity: 1;
-  box-shadow: 0 0 8px var(--alert);
+  opacity: 0.8;
+  width: 3px;
+}
+
+.detection-card.active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 4px solid transparent;
+  background: conic-gradient(
+    from var(--border-angle),
+    transparent 10%,
+    rgba(244, 63, 94, 0.15) 35%,
+    var(--alert) 50%,
+    transparent 60%,
+    rgba(244, 63, 94, 0.15) 85%,
+    var(--alert) 100%
+  ) border-box;
+  -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: flowBorder 2s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes flowBorder {
+  to { --border-angle: 360deg; }
 }
 
 .card-top {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
 }
 
 
 .card-label {
-  font-weight: 600;
-  font-size: 1rem;
+  font-weight: 700;
+  font-size: 1.25rem;
   color: #e2e8f0;
 }
 
-.card-bar {
-  display: flex;
+.card-status-badge {
+  display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(52, 211, 153, 0.1);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  border-radius: 0.375rem;
+  margin-top: 0.5rem;
+  transition: all 0.3s ease;
 }
 
-.bar-track {
-  flex: 1;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
-  overflow: hidden;
+.card-status-badge.active {
+  background: rgba(244, 63, 94, 0.08);
+  border-color: rgba(244, 63, 94, 0.25);
 }
 
-.bar-fill {
-  height: 100%;
-  width: 2%;
-  background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
-  border-radius: 2px;
-  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s ease;
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--safe);
+  box-shadow: 0 0 6px var(--safe);
 }
 
-.bar-fill.active {
-  width: 100%;
-  background: linear-gradient(90deg, var(--alert), #fb7185);
-  box-shadow: 0 0 10px rgba(244, 63, 94, 0.4);
+.card-status-badge.active .status-dot {
+  background: var(--alert);
+  box-shadow: 0 0 8px rgba(244, 63, 94, 0.5);
+  animation: subtlePulse 2s ease-in-out infinite;
 }
 
-.bar-label {
-  font-family: var(--font-tech);
-  font-size: 1rem;
-  min-width: 45px;
-  font-weight: 700;
-  text-align: right;
-  color: var(--text-secondary);
-  transition: color 0.3s ease;
+.card-status-badge .status-text {
+  font-family: var(--font-ui);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--safe);
+  letter-spacing: 0.02em;
 }
 
-.detection-card.active .bar-label {
-  color: #fda4af;
+.card-status-badge.active .status-text {
+  color: var(--alert);
+}
+
+@keyframes subtlePulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.7; }
 }
 
 @media (max-width: 1024px) {
