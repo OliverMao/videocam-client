@@ -52,7 +52,7 @@ services:
       - "-flags"
       - "low_delay"
       - "-i"
-      - "/dev/video1"
+      - "/dev/video0"
       - "-c:v"
       - "libx264"
       - "-preset"
@@ -76,7 +76,7 @@ services:
       - "flv"
       - "rtmp://srs:1935/live/livestream"
     devices:
-      - "/dev/video1:/dev/video1"
+      - "/dev/video0:/dev/video0"
     depends_on:
       - srs
     restart: unless-stopped
