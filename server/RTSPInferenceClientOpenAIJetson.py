@@ -22,9 +22,9 @@ YOLO_DETECT_FPS = 3
 ENABLE_VLM_VERIFICATION = False
 # ================================================
 
-DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:30295/v1"
+DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:30630/v1"
 DEFAULT_OPENAI_API_KEY = "vllm"
-DEFAULT_MODEL_NAME = "/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B"
+DEFAULT_MODEL_NAME = "/workspace/s/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B"
 DEFAULT_INTERVAL_SEC = 3.0
 MAX_WIDTH = 1024
 MAX_FAIL_COUNT = 2
@@ -322,8 +322,8 @@ class RTSPInferenceClient:
             crop_w = min(w, 2000)
             if crop_w > 0:
                 frame = frame[:, 0:crop_w]
-                new_h = int(h * (MAX_WIDTH / crop_w))
-                frame = cv2.resize(frame, (MAX_WIDTH, new_h))
+                # new_h = int(h * (MAX_WIDTH / crop_w))
+                # frame = cv2.resize(frame, (MAX_WIDTH, new_h))
 
             fail_count = 0
             self._is_healthy = True

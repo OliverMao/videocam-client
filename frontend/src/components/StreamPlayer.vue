@@ -27,7 +27,7 @@ function cleanup() {
       player.detachMediaElement()
       player.destroy()
     } catch (e) {
-      console.warn('[StreamPlayer] Cleanup error', e)
+      console.warn('[StreamPlayer] Cleanup FLV error', e)
     }
     player = null
   }
@@ -154,20 +154,51 @@ defineExpose({ status })
 </script>
 
 <template>
-  <video
-    ref="videoRef"
-    class="stream-video"
-    muted
-    autoplay
-    playsinline
-  />
+  <div class="stream-wrapper">
+    <video
+      ref="videoRef"
+      class="stream-video"
+      muted
+      autoplay
+      playsinline
+    />
+    <div class="video-tip">
+      视频仅用于本地实时展示，云端不存储、不传输。
+    </div>
+  </div>
 </template>
 
 <style scoped>
+.stream-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background-color: #000;
+  overflow: hidden;
+}
+
 .stream-video {
   width: 100%;
   height: 100%;
   object-fit: contain;
   background: #000;
+}
+
+.video-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  background-color: #ff0000;
+  color: #ffffff;
+  text-align: center;
+  padding: 6px 0;
+  font-size: 28px;
+  font-weight: 500;
+  opacity: 0.92;
+  z-index: 10;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+  letter-spacing: 0.5px;
 }
 </style>

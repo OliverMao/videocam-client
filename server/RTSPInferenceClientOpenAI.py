@@ -23,11 +23,12 @@ YOLO_DETECT_FPS = 3
 ENABLE_VLM_VERIFICATION = False
 # ================================================
 
-DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:32726/v1"
+DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:32726/v1"   # 4090调用的vllm地址
+# DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:30630/v1"  # Jetson调用的vllm的地址
 DEFAULT_OPENAI_API_KEY = "vllm"
 DEFAULT_MODEL_NAME = "/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B"
 DEFAULT_INTERVAL_SEC = 3.0
-MAX_WIDTH = 1024
+MAX_WIDTH = 512
 MAX_FAIL_COUNT = 2
 
 # 视频/图像采集配置

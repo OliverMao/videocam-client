@@ -3,9 +3,20 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { fetchShowClientData, parseInferenceResult, getWebSocketUrl } from '../api/index.js'
 import type { ShowClientData, InferenceResult } from '../api/types'
 import StreamPlayer from './StreamPlayer.vue'
+import QAZone from './QAZone.vue'
 
-const streamUrl = import.meta.env.VITE_STREAM_URL 
+const streamUrl = import.meta.env.VITE_STREAM_URL
+const combinedStreamUrl = import.meta.env.VITE_COMBINED_STREAM_URL
 const is_Jetson = import.meta.env.VITE_IS_JETSON === 'true'
+
+type StreamMode = 'main' | 'combined'
+const streamMode = ref<StreamMode>('main')
+const activeStreamUrl = computed(() =>
+  streamMode.value === 'combined' ? combinedStreamUrl : streamUrl
+)
+function toggleStream() {
+  streamMode.value = streamMode.value === 'main' ? 'combined' : 'main'
+}
 
 import {
   Cigarette,
@@ -170,7 +181,7 @@ watch(descriptionHistory, () => {
 
 onMounted(() => {
   loadData()
-  intervalId = window.setInterval(loadData, 1000)
+  intervalId = window.setInterval(loadData, 10000)
   updateContainerHeight()
   window.addEventListener('resize', updateContainerHeight)
 })
@@ -216,26 +227,29 @@ onUnmounted(() => {
         </div>
         <div class="brand" v-else>
           <h1>TeleAI 隐私相机</h1>
-        </div>
       </div>
+    </div>
     </header>
 
     <div v-if="error && streamStatus !== 'playing'" class="tech-alert">
       <span>{{ error }}</span>
     </div>
 
-    <div v-if="data || loading" class="content-grid">
+    <!-- QA -->
+    <QAZone />
+
+    <!-- <div v-if="data || loading" class="content-grid">
       <section class="tech-panel video-panel" v-if="!is_Jetson">
         <div class="panel-frame">
-          <div class="panel-header">
-            <div class="header-left">
-              <span class="header-title">本地视频流预览（仅本地可见）</span>
-            </div>
-            <span class="header-tag">LIVE FEED</span>
-          </div>
           <div class="panel-content">
-            <StreamPlayer :streamUrl="streamUrl" @error="onStreamError" @connected="onStreamConnected"
+            <StreamPlayer :streamUrl="activeStreamUrl" @error="onStreamError" @connected="onStreamConnected"
               @disconnected="onStreamDisconnected" />
+            <button class="stream-toggle-btn" @click="toggleStream">
+              <span class="toggle-label">{{ streamMode === 'main' ? '原始画面' : '隐私处理' }}</span>
+              <span class="toggle-indicator">
+                <span class="toggle-dot" :class="{ active: streamMode === 'combined' }"></span>
+              </span>
+            </button>
           </div>
         </div>
       </section>
@@ -297,7 +311,7 @@ onUnmounted(() => {
           </div>
         </div>
       </section>
-    </div>
+    </div> -->
   </div>
 </template>
 
@@ -475,6 +489,78 @@ onUnmounted(() => {
 .panel-content { flex: 1; min-height: 0; padding: 1rem; overflow: hidden; display: flex; flex-direction: column; }
 .video-panel .panel-content { padding: 0; background: #020210; position: relative; }
 .video-panel :deep(video), .video-panel :deep(canvas) { width: 100%; height: 100%; object-fit: contain; }
+
+.stream-toggle-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.9rem;
+  background: rgba(5, 5, 30, 0.75);
+  border: 1px solid var(--border-tech);
+  border-radius: 2rem;
+  color: var(--text-primary);
+  font-family: var(--font-tech);
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: all 0.25s ease;
+}
+.stream-toggle-btn:hover {
+  background: rgba(99, 102, 241, 0.25);
+  border-color: var(--accent-blue);
+}
+.toggle-indicator {
+  display: flex;
+  align-items: center;
+  width: 28px;
+  height: 16px;
+  background: rgba(99, 102, 241, 0.2);
+  border-radius: 8px;
+  position: relative;
+  transition: background 0.25s ease;
+}
+.toggle-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent-cyan);
+  box-shadow: 0 0 6px var(--accent-cyan);
+  position: absolute;
+  left: 2px;
+  transition: all 0.25s ease;
+}
+.toggle-dot.active {
+  left: 14px;
+  background: var(--accent-purple);
+  box-shadow: 0 0 6px var(--accent-purple);
+}
+
+.combined-labels {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+}
+.combined-label {
+  position: absolute;
+  padding: 4px 14px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  border-radius: 4px;
+  backdrop-filter: blur(4px);
+}
+.label-top { top: 4%; left: 50%; transform: translateX(-50%); }
+.label-bl  { top: 54%; left: 3%; }
+.label-br  { top: 54%; left: 53%; }
 
 .desc-content { font-size: clamp(0.95rem, 1.1vw, 1.15rem); line-height: 1.8; color: var(--text-secondary); overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; flex: 1; min-height: 0; }
 .virtual-list { position: relative; flex: 1; }
