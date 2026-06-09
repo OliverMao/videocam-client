@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
 
 #     if capture_service:
 #         capture_service.stop()
-#     if inference_client:
+#     if inference_client:ggdGggdG
 #         inference_client.stop()
 # app = FastAPI(title="VideoCam API", lifespan=lifespan)
 app = FastAPI(title="VideoCam API", lifespan=lifespan)
