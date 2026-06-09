@@ -19,3 +19,7 @@ package-lock.json
 save
 *.png
 *.mp4
+.memory/
+.vectordb/
+*.pth
+*.otf

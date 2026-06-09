@@ -7,8 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install uv && uv pip install --system --no-cache-dir -r requirements.txt
-
+RUN pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple
+RUN uv pip install --system --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 COPY . .
 
 EXPOSE 28001

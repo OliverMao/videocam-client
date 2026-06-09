@@ -15,19 +15,18 @@ services:
     tty: true
     restart: unless-stopped
 
-  # app:
-  #   build: ./server
-  #   container_name: video-api
-  #   ports:
-  #     - "28001:28001"
-  #   environment:
-  #     - RTSP_URL=rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101
-  #     - INFER_URL=http://116.238.240.2:31676/packet
-  #   volumes:
-  #     - ./server/:/app
-  #   depends_on:
-  #     - srs
-  #   restart: unless-stopped
+  app:
+    build: ./server
+    container_name: video-api
+    ports:
+      - "28001:28001"
+    environment:
+      - RTSP_URL=rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101
+    volumes:
+      - ./server/:/app
+    depends_on:
+      - srs
+    restart: unless-stopped
 
   ffmpeg-stream:
     image: linuxserver/ffmpeg
@@ -92,22 +91,22 @@ services:
         max-size: "50m"
         max-file: "3"
 
-  # frontend-dev:
-  #   image: node:22
-  #   container_name: video-frontend-dev
-  #   working_dir: /app
-  #   volumes:
-  #     - ./frontend:/app
-  #     - /app/node_modules
-  #   ports:
-  #     - "4173:4173"
-  #   environment:
-  #     - VITE_STREAM_URL=http://192.168.151.158:8081/live/livestream.flv
-  #     - VITE_API_HOST=http://192.168.151.158:28001
-  #   command: ["/bin/sh", "-c", "npm config set registry https://registry.npmmirror.com && npm install && npm run dev -- --host 0.0.0.0"]
-  #   stdin_open: true
-  #   tty: true
-  #   restart: unless-stopped
+  frontend-dev:
+    image: node:22
+    container_name: video-frontend-dev
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "4173:4173"
+    environment:
+      - VITE_STREAM_URL=http://192.168.151.158:8081/live/livestream.flv
+      - VITE_API_HOST=http://192.168.151.158:28001
+    command: ["/bin/sh", "-c", "npm config set registry https://registry.npmmirror.com && npm install && npm run dev -- --host 0.0.0.0"]
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
 
   
 # ffmpeg -rtsp_transport tcp -i "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101" -c copy -f flv rtmp://localhost:1935/live/livestream

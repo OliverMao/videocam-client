@@ -238,7 +238,7 @@ onUnmounted(() => {
     <!-- QA -->
     <QAZone />
 
-    <!-- <div v-if="data || loading" class="content-grid">
+    <div v-if="data || loading" class="content-grid">
       <section class="tech-panel video-panel" v-if="!is_Jetson">
         <div class="panel-frame">
           <div class="panel-content">
@@ -311,7 +311,7 @@ onUnmounted(() => {
           </div>
         </div>
       </section>
-    </div> -->
+    </div>
   </div>
 </template>
 

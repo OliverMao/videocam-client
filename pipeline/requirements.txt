@@ -3,3 +3,8 @@ numpy==1.26.4
 httpx
 pillow
 pydantic
+umap-learn 
+scikit-learn 
+torch
+torchvision 
+matplotlib

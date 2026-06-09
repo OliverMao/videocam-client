@@ -2,107 +2,16 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 from openai import AsyncOpenAI
 
+from agent.memory import MemoryManager
+from agent.prompt import SYSTEM_PROMPT
+from agent.tools import MAX_TOOL_ITERATIONS, TOOL_DESCRIPTIONS, TOOLS
+
 logger = logging.getLogger(__name__)
-
-SYSTEM_PROMPT = """你是一个智能监控数据分析助手，负责基于历史监控数据回答用户问题。
-
-你的工作流程（必须严格遵守）：
-1. **分析问题** — 理解用户的核心意图，输出一段分析文字
-2. **制定计划** — 立即调用 todo_write，列出所有待执行任务（全部 pending）
-3. **逐步执行** — 按顺序执行每个任务：执行前调用 todo_write 将该任务改为 in_progress，执行后改为 completed，然后继续下一个
-
-可用工具：
-- todo_write：更新任务列表（每次执行前后都要更新状态）
-- query_database：按时间区间和关键词查询历史监控数据
-- sort_by_relevance：按匹配度对查询结果排序
-- summarize：对最终结果进行总结表达
-
-要求：第一步必须是 todo_write 列出计划，未经计划不得直接调用其他工具。"""
-
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "todo_write",
-            "description": "创建或更新任务列表，在动手前列出所有步骤，执行时逐步更新状态",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "todos": {
-                        "type": "array",
-                        "description": "完整的任务列表（每次调用必须包含全部任务）",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "content": {"type": "string", "description": "任务描述"},
-                                "status": {"type": "string", "enum": ["pending", "in_progress", "completed"], "description": "任务状态"},
-                            },
-                            "required": ["content", "status"],
-                        },
-                    },
-                },
-                "required": ["todos"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_database",
-            "description": "按时间区间和关键词查询历史监控数据",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "start_time": {"type": "string", "description": "开始时间，格式 YYYY-MM-DD HH:mm:ss"},
-                    "end_time": {"type": "string", "description": "结束时间，格式 YYYY-MM-DD HH:mm:ss"},
-                    "keywords": {"type": "array", "items": {"type": "string"}, "description": "搜索关键词，如吸烟、打架等"},
-                },
-                "required": ["start_time", "end_time"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "sort_by_relevance",
-            "description": "按匹配度对查询结果进行排序",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "待排序的原始数据"},
-                    "query": {"type": "string", "description": "排序依据的查询描述"},
-                },
-                "required": ["data", "query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "summarize",
-            "description": "对最终结果进行总结表达",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "content": {"type": "string", "description": "待总结的内容"},
-                    "style": {"type": "string", "description": "表达风格，可选：简洁、详细、报告"},
-                },
-                "required": ["content"],
-            },
-        },
-    },
-]
-
-TOOL_DESCRIPTIONS: dict[str, str] = {
-    t["function"]["name"]: t["function"]["description"]
-    for t in TOOLS
-}
-
-MAX_TOOL_ITERATIONS = 10
 
 
 class QAAgent:
@@ -111,10 +20,17 @@ class QAAgent:
         base_url: str = "http://116.238.240.2:30630",
         api_key: str = "vllm",
         model: str = "Qwen3.6-35B-A3B",
+        vectordb=None,
     ):
         logger.info(f"[QA] QAAgent 初始化: model={model}, base_url={base_url}")
         self.client = AsyncOpenAI(base_url=f"{base_url}/v1", api_key=api_key)
         self.model = model
+        self.vectordb = vectordb
+        self.memory = MemoryManager(
+            memory_dir=Path(__file__).parent.parent / ".memory",
+            client=self.client,
+            model=model,
+        )
 
     async def execute_tool(self, name: str, input_data: dict) -> str:
         t0 = time.monotonic()
@@ -124,21 +40,68 @@ class QAAgent:
             todos = input_data.get("todos", [])
             result = json.dumps({"status": "ok", "message": f"已更新 {len(todos)} 个任务"}, ensure_ascii=False)
         elif name == "query_database":
-            result = json.dumps({
-                "status": "ok",
-                "message": f"查询区间 {input_data.get('start_time','')} ~ {input_data.get('end_time','')}，关键词：{input_data.get('keywords',[])}",
-                "data": [],
-            }, ensure_ascii=False)
+            start_time = input_data.get("start_time", "")
+            end_time = input_data.get("end_time", "")
+            keywords = input_data.get("keywords", [])
+            frames: list[dict] = []
+            if self.vectordb and start_time and end_time:
+                try:
+                    frames = self.vectordb.search_by_time(start_time, end_time, limit=200)
+                except Exception as e:
+                    logger.warning(f"[QA][Tool] VectorDB 查询失败: {e}")
+            if frames:
+                frame_summaries = [
+                    {"id": f["id"], "timestamp": f["timestamp"], "thumb": f"/api/vectordb/thumb/{f.get('thumb', '')}"}
+                    for f in frames
+                ]
+                result = json.dumps({
+                    "status": "ok",
+                    "message": f"查询区间 {start_time} ~ {end_time}，关键词：{keywords}，共找到 {len(frames)} 帧",
+                    "data": frame_summaries,
+                    "total": len(frames),
+                }, ensure_ascii=False)
+            else:
+                result = json.dumps({
+                    "status": "ok",
+                    "message": f"查询区间 {start_time} ~ {end_time}，关键词：{keywords}，矢量数据库中暂无匹配帧",
+                    "data": [],
+                }, ensure_ascii=False)
         elif name == "sort_by_relevance":
-            result = json.dumps({
-                "status": "ok",
-                "message": f"按「{input_data.get('query','')}」排序完成",
-            }, ensure_ascii=False)
+            raw_data = input_data.get("data", "")
+            query_desc = input_data.get("query", "")
+            try:
+                parsed = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+                items = parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                items = []
+            if items:
+                sorted_items = sorted(items, key=lambda x: x.get("timestamp", ""), reverse=True)
+                result = json.dumps({
+                    "status": "ok",
+                    "message": f"按「{query_desc}」排序完成，共 {len(sorted_items)} 条",
+                    "data": sorted_items,
+                }, ensure_ascii=False)
+            else:
+                result = json.dumps({
+                    "status": "ok",
+                    "message": f"按「{query_desc}」排序完成，无数据",
+                }, ensure_ascii=False)
         elif name == "summarize":
             result = json.dumps({
                 "status": "ok",
                 "message": f"已按「{input_data.get('style','简洁')}」风格总结",
             }, ensure_ascii=False)
+        elif name == "memory_write":
+            try:
+                mem_id = await self.memory.write_memory(
+                    content=input_data.get("content", ""),
+                    type_=input_data.get("type", "reference"),
+                    tags=input_data.get("tags", []),
+                )
+                result = json.dumps({"status": "ok", "message": f"已保存记忆 (id={mem_id})"}, ensure_ascii=False)
+            except Exception as e:
+                logger.warning(f"[QA][Tool] memory_write 失败: {e}")
+                result = json.dumps({"status": "error", "message": f"保存失败: {e}"}, ensure_ascii=False)
         else:
             logger.warning(f"[QA][Tool] 未知工具: {name}")
             result = json.dumps({"status": "error", "message": f"未知工具: {name}"})
@@ -147,14 +110,14 @@ class QAAgent:
         logger.info(f"[QA][Tool] {name} 完成, 耗时 {elapsed:.1f}ms, 结果: {result[:120]}...")
         return result
 
-    async def _call_ai(self, messages: list, is_first_call: bool):
+    async def _call_ai(self, messages: list, is_first_call: bool, system_prompt: str | None = None):
         phase = "Phase1" if is_first_call else "Phase2"
         t0 = time.monotonic()
         logger.info(f"[QA][{phase}] 调用 AI: messages={len(messages)}, model={self.model}")
 
         response = await self.client.chat.completions.create(
             model=self.model,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+            messages=[{"role": "system", "content": system_prompt or SYSTEM_PROMPT}] + messages,
             tools=TOOLS,
         )
 
@@ -193,6 +156,16 @@ class QAAgent:
         messages = list(history or [])
         messages.append({"role": "user", "content": question})
 
+        try:
+            await self.memory.ensure_ready()
+            relevant = await self.memory.load_relevant(question)
+            system_prompt = self.memory.build_system_prompt(SYSTEM_PROMPT, relevant)
+            if relevant:
+                logger.info(f"[QA] 注入 {len(relevant)} 条相关记忆")
+        except Exception as e:
+            logger.warning(f"[QA] 记忆加载失败: {e}")
+            system_prompt = None
+
         result: dict[str, Any] = {"answer": "", "steps": []}
         todo_step_idx: int | None = None
 
@@ -201,7 +174,7 @@ class QAAgent:
 
         try:
             logger.info("[QA] Phase 1: 分析问题...")
-            text, tool_calls, assistant_message = await self._call_ai(messages, is_first_call=True)
+            text, tool_calls, assistant_message = await self._call_ai(messages, is_first_call=True, system_prompt=system_prompt)
 
             if text:
                 add_step("thinking", "分析问题", text)
@@ -212,6 +185,7 @@ class QAAgent:
                 logger.info("[QA] 无工具调用, 直接输出回答")
                 add_step("answer", "生成回答", text)
                 result["answer"] = text
+                asyncio.create_task(self._extract_memories_bg(question, text))
                 return result
 
             messages.append(assistant_message)
@@ -241,7 +215,7 @@ class QAAgent:
                         "content": tool_result,
                     })
 
-                text, tool_calls, assistant_message = await self._call_ai(messages, is_first_call=False)
+                text, tool_calls, assistant_message = await self._call_ai(messages, is_first_call=False, system_prompt=system_prompt)
                 logger.info(f"[QA] 迭代 {tool_iter+1} 完成: text_len={len(text)}, new_tool_calls={len(tool_calls)}, elapsed={((time.monotonic()-t0)*1000):.1f}ms")
                 messages.append(assistant_message)
 
@@ -249,6 +223,7 @@ class QAAgent:
                     logger.info("[QA] 无更多工具调用, 输出最终回答")
                     add_step("answer", "生成回答", text)
                     result["answer"] = text
+                    asyncio.create_task(self._extract_memories_bg(question, text))
                     return result
 
                 if text:
@@ -273,6 +248,16 @@ class QAAgent:
         messages = list(history or [])
         messages.append({"role": "user", "content": question})
 
+        try:
+            await self.memory.ensure_ready()
+            relevant = await self.memory.load_relevant(question)
+            system_prompt = self.memory.build_system_prompt(SYSTEM_PROMPT, relevant)
+            if relevant:
+                logger.info(f"[QA][Stream] 注入 {len(relevant)} 条相关记忆")
+        except Exception as e:
+            logger.warning(f"[QA][Stream] 记忆加载失败: {e}")
+            system_prompt = None
+
         todo_step_idx: int | None = None
         step_count = 0
 
@@ -283,16 +268,14 @@ class QAAgent:
             return {"idx": idx, "type": type_, "title": title, "content": content}
 
         try:
-            # Emit analysis step as active before calling AI
             analysis_idx = step_count
             step_count += 1
             yield self._sse({"event": "step_add", "step": {"idx": analysis_idx, "type": "analysis", "title": "分析问题", "content": "", "status": "active"}})
 
-            text, tool_calls, assistant_message = await self._call_ai(messages, is_first_call=True)
+            text, tool_calls, assistant_message = await self._call_ai(messages, is_first_call=True, system_prompt=system_prompt)
 
             logger.info(f"[QA][Stream] Phase1 done: text_len={len(text)}, tools={len(tool_calls)}")
 
-            # Collect todos from the first todo_write call (if any) to merge into analysis step
             pending_todos: list = []
             remaining_tool_calls: list = []
             for tc in tool_calls:
@@ -308,23 +291,21 @@ class QAAgent:
             yield self._sse({"event": "step_update", "idx": analysis_idx, "content": analysis_content, "status": "done"})
 
             if not tool_calls:
-                # No tools — stream answer directly
                 yield self._sse({"event": "step_add", "step": {"idx": step_count, "type": "answer", "title": "生成回答", "content": "", "status": "active"}})
                 answer_idx = step_count
                 step_count += 1
-                async for chunk in self._stream_answer(messages + [assistant_message]):
+                async for chunk in self._stream_text(text):
                     yield self._sse({"event": "answer_chunk", "idx": answer_idx, "text": chunk})
                 yield self._sse({"event": "step_status", "idx": answer_idx, "status": "done"})
                 yield self._sse({"event": "done"})
+                asyncio.create_task(self._extract_memories_bg(question, text))
                 return
 
             messages.append(assistant_message)
 
-            # Process any non-todo tool calls from phase 1
             active_tool_calls = remaining_tool_calls
             if pending_todos and not active_tool_calls:
-                # todo_write was the only call; re-ask AI for next steps
-                text, tool_calls, assistant_message = await self._call_ai(messages, is_first_call=False)
+                text, tool_calls, assistant_message = await self._call_ai(messages, is_first_call=False, system_prompt=system_prompt)
                 messages.append(assistant_message)
                 active_tool_calls = tool_calls
 
@@ -333,7 +314,6 @@ class QAAgent:
 
                 for tc in active_tool_calls:
                     if tc["name"] == "todo_write":
-                        # Subsequent todo_write: update analysis step todos
                         todos = tc["input"].get("todos", [])
                         await self.execute_tool(tc["name"], tc["input"])
                         messages.append({"role": "tool", "tool_call_id": tc["id"], "content": json.dumps({"status": "ok"}, ensure_ascii=False)})
@@ -353,12 +333,11 @@ class QAAgent:
 
                     yield self._sse({"event": "step_update", "idx": tool_step_idx, "content": tool_result, "status": "done"})
 
-                text, tool_calls, assistant_message = await self._call_ai(messages, is_first_call=False)
+                text, tool_calls, assistant_message = await self._call_ai(messages, is_first_call=False, system_prompt=system_prompt)
                 messages.append(assistant_message)
                 active_tool_calls = tool_calls
 
                 if not active_tool_calls:
-                    # Final answer — stream it
                     yield self._sse({"event": "step_add", "step": {"idx": step_count, "type": "answer", "title": "生成回答", "content": "", "status": "active"}})
                     answer_idx = step_count
                     step_count += 1
@@ -366,6 +345,7 @@ class QAAgent:
                         yield self._sse({"event": "answer_chunk", "idx": answer_idx, "text": chunk})
                     yield self._sse({"event": "step_status", "idx": answer_idx, "status": "done"})
                     yield self._sse({"event": "done"})
+                    asyncio.create_task(self._extract_memories_bg(question, text))
                     return
 
                 if text:
@@ -378,6 +358,12 @@ class QAAgent:
             logger.error(f"[QA][Stream] 异常: {e}", exc_info=True)
             yield self._sse({"event": "error", "message": str(e)})
 
+    async def _extract_memories_bg(self, question: str, answer: str) -> None:
+        try:
+            await self.memory.extract_from_conversation(question, answer)
+        except Exception as e:
+            logger.debug(f"[QA] 记忆提取失败: {e}")
+
     async def _stream_text(self, text: str):
         """Fake-stream existing text 4 chars at a time."""
         chunk_size = 4
@@ -385,12 +371,12 @@ class QAAgent:
             yield text[i:i + chunk_size]
             await asyncio.sleep(0.02)
 
-    async def _stream_answer(self, messages: list):
+    async def _stream_answer(self, messages: list, system_prompt: str | None = None):
         """Call AI with stream=True and yield content chunks."""
         try:
             stream = await self.client.chat.completions.create(
                 model=self.model,
-                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+                messages=[{"role": "system", "content": system_prompt or SYSTEM_PROMPT}] + messages,
                 stream=True,
             )
             async for chunk in stream:

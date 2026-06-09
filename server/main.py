@@ -2,13 +2,17 @@ import asyncio
 import logging
 import queue
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+import cv2
+import numpy as np
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
-from qa_agent import QAAgent
+from agent import QAAgent
+from vectordb import FrameCaptureService, VectorDB, compute_embedding
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -40,6 +44,11 @@ class ShowClientResponse(BaseModel):
 
 inference_client: Optional[RTSPInferenceClient] = None
 
+VECTORDB_DIR = Path(__file__).parent / ".vectordb"
+vectordb = VectorDB(VECTORDB_DIR)
+capture_service: Optional[FrameCaptureService] = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global inference_client
@@ -49,16 +58,22 @@ async def lifespan(app: FastAPI):
     yield
     if inference_client:
         inference_client.stop()
-        print("Inference client stopped.")
 
 # @asynccontextmanager
-# def lifespan(app: FastAPI):
-#     global inference_client
-#     print("Inference client started.")
+# async def lifespan(app: FastAPI):
+#     global inference_client, capture_service
+
+#     capture_service = FrameCaptureService(RTSP_URL, vectordb, VECTORDB_DIR)
+#     capture_service.start()
+
 #     yield
 
+#     if capture_service:
+#         capture_service.stop()
+#     if inference_client:
+#         inference_client.stop()
 # app = FastAPI(title="VideoCam API", lifespan=lifespan)
-app = FastAPI(title="VideoCam API")
+app = FastAPI(title="VideoCam API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -70,16 +85,16 @@ app.add_middleware(
 # @app.get("/api/show-client", response_model=Optional[ShowClientResponse])
 @app.get("/api/show-client")
 async def get_show_client():
-    return {
-            "mode": "image",
-            "total_api_time_ms": 4305.08279800415,
-            "server_response": {
-                "result": "\n{\"has_person\": 0, \"violations\": []}\n"
-            },
-            "media_processing_time_ms": 91.82310104370117,
-            "frame_count": 4,
-            "capture_fps": 3
-            }
+    # return {
+    #         "mode": "image",
+    #         "total_api_time_ms": 4305.08279800415,
+    #         "server_response": {
+    #             "result": "\n{\"has_person\": 0, \"violations\": []}\n"
+    #         },
+    #         "media_processing_time_ms": 91.82310104370117,
+    #         "frame_count": 4,
+    #         "capture_fps": 3
+    #         }
     if inference_client is None:
         raise HTTPException(status_code=503, detail="Client not initialized")
     if not inference_client.is_healthy:
@@ -105,6 +120,7 @@ qa_agent = QAAgent(
         base_url=DEFAULT_OPENAI_API_BASE,
         api_key=DEFAULT_OPENAI_API_KEY,
         model=DEFAULT_MODEL_NAME,
+        vectordb=vectordb,
 )
 
 
@@ -135,6 +151,39 @@ async def qa_ask_stream(request: Request):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# --- 矢量数据库 ---
+
+@app.get("/api/vectordb/stats")
+async def vectordb_stats():
+    return vectordb.stats()
+
+
+@app.post("/api/vectordb/search")
+async def vectordb_search(file: UploadFile = File(...), top_k: int = 5):
+    data = await file.read()
+    arr = np.frombuffer(data, dtype=np.uint8)
+    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise HTTPException(status_code=400, detail="无法解析图片")
+    vec = compute_embedding(frame)
+    results = vectordb.search(vec, top_k=top_k)
+    return {"results": results}
+
+
+@app.get("/api/vectordb/frames")
+async def vectordb_frames(start: str, end: str, limit: int = 100):
+    results = vectordb.search_by_time(start, end, limit=limit)
+    return {"count": len(results), "frames": results}
+
+
+@app.get("/api/vectordb/thumb/{path:path}")
+async def vectordb_thumb(path: str):
+    full = VECTORDB_DIR / path
+    if not full.exists():
+        raise HTTPException(status_code=404, detail="缩略图不存在")
+    return FileResponse(str(full), media_type="image/jpeg")
 
 
 if __name__ == "__main__":

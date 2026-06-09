@@ -27,6 +27,7 @@ interface QAMessage {
 const qaInput = ref('')
 const qaMessages = ref<QAMessage[]>([])
 const qaProcessing = ref(false)
+const qaActive = ref(false)
 let qaMsgId = 0
 const qaPanelRef = ref<HTMLElement | null>(null)
 
@@ -46,6 +47,25 @@ function toggleTimeDropdown() { qaTimeOpen.value = !qaTimeOpen.value }
 function selectTime(val: string) {
   qaTimeRange.value = val
   qaTimeOpen.value = false
+}
+
+function formatDatetime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+function buildTimeRangeText(): string {
+  const end = new Date()
+  const offsetMs: Record<string, number> = {
+    '15m': 15 * 60 * 1000,
+    '1h': 60 * 60 * 1000,
+    '4h': 4 * 60 * 60 * 1000,
+    '8h': 8 * 60 * 60 * 1000,
+    '24h': 24 * 60 * 60 * 1000,
+    'long': 30 * 24 * 60 * 60 * 1000,
+  }
+  const start = new Date(end.getTime() - (offsetMs[qaTimeRange.value] ?? 60 * 60 * 1000))
+  return `查询时间范围：${formatDatetime(start)}~${formatDatetime(end)}`
 }
 
 function handlePresetClick(text: string) {
@@ -70,9 +90,13 @@ async function handleQASend() {
   const text = qaInput.value.trim()
   if (!text || qaProcessing.value) return
   qaInput.value = ''
+  qaMessages.value = []
+  qaActive.value = true
 
   qaMessages.value.push({ id: qaMsgId++, role: 'user', content: text, displayedContent: text })
   qaProcessing.value = true
+
+  const questionWithTime = `${text}\n${buildTimeRangeText()}`
 
   const msg: QAMessage = { id: qaMsgId++, role: 'assistant', content: '', displayedContent: '', steps: [] }
   qaMessages.value.push(msg)
@@ -107,7 +131,7 @@ async function handleQASend() {
     const res = await fetch(`${apiHost}/qa/ask-stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: text, history: [] }),
+      body: JSON.stringify({ question: questionWithTime, history: [] }),
     })
     if (!res.body) throw new Error('No response body')
 
@@ -139,7 +163,7 @@ async function handleQASend() {
 </script>
 
 <template>
-  <div class="qa-zone">
+  <div class="qa-zone" :class="{ 'is-active': qaActive }" @mouseleave="qaActive = false">
     <div class="qa-hover-bg"></div>
     <div class="qa-messages-area" ref="qaPanelRef" v-if="qaMessages.length > 0">
       <div v-for="msg in qaMessages" :key="msg.id" class="qa-msg" :class="msg.role">
@@ -199,9 +223,9 @@ async function handleQASend() {
       </div>
     </div>
 
-    <div v-if="qaMessages.length === 0 && !qaProcessing" class="qa-presets">
-      <span class="qa-preset" @click="handlePresetClick('当前展厅有什么异常吗？')">当前展厅有什么异常吗？</span>
-      <span class="qa-preset" @click="handlePresetClick('画面中有人在吸烟吗？')">画面中有人在吸烟吗？</span>
+    <div v-if="!qaProcessing" class="qa-presets">
+      <span class="qa-preset" @click="handlePresetClick('展厅有什么异常吗？')">展厅有什么异常吗？</span>
+      <span class="qa-preset" @click="handlePresetClick('有人在展厅吸烟过吗？')">有人在展厅吸烟过吗？</span>
       <span class="qa-preset" @click="handlePresetClick('监控系统运行状态如何？')">监控系统运行状态如何？</span>
     </div>
 
@@ -269,14 +293,20 @@ async function handleQASend() {
   background: rgba(5, 5, 26, 0.4);
   backdrop-filter: blur(12px);
   scrollbar-width: none;
-  transition: background 0.3s ease;
+  transition: background 0.3s ease, opacity 0.3s ease;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.qa-zone:hover .qa-messages-area,
+.qa-zone:focus-within .qa-messages-area,
+.qa-zone.is-active .qa-messages-area {
+  opacity: 1;
+  pointer-events: auto;
+  background: rgba(5, 5, 26, 0.6);
 }
 
 .qa-messages-area::-webkit-scrollbar { display: none; }
-
-.qa-zone:hover .qa-messages-area {
-  background: rgba(5, 5, 26, 0.6);
-}
 
 .qa-msg {
   animation: qaFadeIn 0.3s ease;
@@ -502,7 +532,9 @@ async function handleQASend() {
   pointer-events: none;
 }
 
-.qa-zone:hover .qa-presets {
+.qa-zone:hover .qa-presets,
+.qa-zone:focus-within .qa-presets,
+.qa-zone.is-active .qa-presets {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
@@ -542,7 +574,9 @@ async function handleQASend() {
   pointer-events: none;
 }
 
-.qa-zone:hover .qa-hover-bg {
+.qa-zone:hover .qa-hover-bg,
+.qa-zone:focus-within .qa-hover-bg,
+.qa-zone.is-active .qa-hover-bg {
   opacity: 1;
 }
 
