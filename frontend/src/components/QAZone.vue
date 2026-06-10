@@ -103,6 +103,18 @@ async function handleQASend() {
 
   nextTick(() => qaPanelRef.value?.scrollTo({ top: qaPanelRef.value.scrollHeight, behavior: 'smooth' }))
 
+  if (import.meta.env.VITE_QA_DEV_MODE === 'true') {
+    msg.steps!.push({
+      title: '回答',
+      type: 'answer',
+      content: '本智能助手正在闭关，等我学成归来再为你解答~',
+      status: 'done',
+    })
+    msg.displayedContent = '本智能助手正在闭关，等我学成归来再为你解答~'
+    qaProcessing.value = false
+    return
+  }
+
   function findMsg() { return qaMessages.value.find(m => m.id === msg.id) }
 
   function applyEvent(ev: any) {

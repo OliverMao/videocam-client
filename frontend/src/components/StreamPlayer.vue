@@ -16,7 +16,8 @@ const videoRef = ref<HTMLVideoElement | null>(null)
 const status = ref<'connecting' | 'playing' | 'error' | 'idle'>('idle')
 
 let player: flvjs.Player | null = null
-let refreshTimer: number | null = null // 用于存储定时器ID
+let refreshTimer: number | null = null
+let isRefreshing = false
 
 // 清理播放器实例
 function cleanup() {
@@ -37,9 +38,10 @@ function cleanup() {
 // 清除定时器
 function clearRefreshTimer() {
   if (refreshTimer !== null) {
-    clearInterval(refreshTimer)
+    clearTimeout(refreshTimer)
     refreshTimer = null
   }
+  isRefreshing = false
 }
 
 // 初始化播放器
@@ -71,11 +73,12 @@ function initPlayer() {
       },
       {
         enableWorker: false,
-        enableStashBuffer: false, 
-        stashInitialSize: 128,
+        enableStashBuffer: true,
+        stashInitialSize: 1024,
         autoCleanupSourceBuffer: true,
         lazyLoad: false,
-        lazyLoadMaxDuration: 0
+        lazyLoadMaxDuration: 0,
+        fixAudioTimestampGap: false
       }
     )
 
@@ -84,13 +87,14 @@ function initPlayer() {
     // 错误监听
     player.on(flvjs.Events.ERROR, (errType, errDetail, errInfo) => {
       console.error('[FLV Error]', errType, errDetail, errInfo)
-      // 如果是严重错误，可以考虑在这里触发刷新，但要避免死循环
       if (errType === flvjs.ErrorTypes.NETWORK_ERROR) {
          status.value = 'error'
          emit('error', `网络错误: ${errDetail}`)
+         scheduleReconnect()
       } else if (errType === flvjs.ErrorTypes.MEDIA_ERROR) {
          status.value = 'error'
          emit('error', `媒体错误: ${errDetail}`)
+         scheduleReconnect()
       }
     })
 
@@ -113,20 +117,20 @@ function initPlayer() {
   }
 }
 
-// 强制刷新流的函数
-function forceRefreshStream() {
-  console.log('[StreamPlayer] Force refreshing stream...')
-  // 直接重新初始化，内部会先 cleanup
-  initPlayer()
+// 错误触发重连（带防抖）
+function scheduleReconnect() {
+  if (isRefreshing) return
+  isRefreshing = true
+  console.log('[StreamPlayer] Scheduling reconnect in 3s...')
+  refreshTimer = window.setTimeout(() => {
+    isRefreshing = false
+    refreshTimer = null
+    initPlayer()
+  }, 3000)
 }
 
 onMounted(() => {
   initPlayer()
-  
-  // 启动定时器：每 60,000 毫秒 (1分钟) 刷新一次
-  refreshTimer = window.setInterval(() => {
-    forceRefreshStream()
-  }, 60 * 1000)
 })
 
 onUnmounted(() => {
@@ -139,14 +143,8 @@ onUnmounted(() => {
 watch(() => props.streamUrl, (newUrl, oldUrl) => {
   if (newUrl && newUrl !== oldUrl) {
     console.log('[StreamPlayer] URL changed, re-initializing...')
-    // 切换URL时，通常也需要重置定时器，从新URL开始计时
     clearRefreshTimer()
     initPlayer()
-    
-    // 重新启动定时器
-    refreshTimer = window.setInterval(() => {
-      forceRefreshStream()
-    }, 60 * 1000)
   }
 })
 
@@ -163,7 +161,7 @@ defineExpose({ status })
       playsinline
     />
     <div class="video-tip">
-      视频仅用于本地实时展示，云端不存储、不传输。
+      原始视频仅用于展厅展示，云端无法获取原始视频。
     </div>
   </div>
 </template>
