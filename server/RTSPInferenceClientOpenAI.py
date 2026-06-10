@@ -18,20 +18,23 @@ ENABLE_VLM_VERIFICATION = False
 # DEFAULT_OPENAI_API = "http://116.238.240.2:30630/v1"  # Jetson
 DEFAULT_OPENAI_API = "http://116.238.240.2:32726/v1"  # 4090
 DEFAULT_OPENAI_API_BASE = os.environ.get("OPENAI_API_BASE", DEFAULT_OPENAI_API)
-# DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:30630/v1"  # Jetson调用的vllm的地址
 DEFAULT_OPENAI_API_KEY = "vllm"
 
-# MODEL_NAME = "Qwen3.6-35B-A3B"
 MODEL_NAME = "/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B"
 DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", MODEL_NAME)
+
+# 推理触发间隔（每 1 秒触发一次）
 DEFAULT_INTERVAL_SEC = float(os.environ.get("INTERVAL_SEC", "1.0"))
+
+# 抽帧相关：2 秒窗口 × 2 fps = 4 帧
+WINDOW_SEC = float(os.environ.get("WINDOW_SEC", "2.0"))     # 时间窗口长度
+SAMPLE_FPS = float(os.environ.get("SAMPLE_FPS", "2.0"))     # 每秒抽几帧
+REQUIRED_FRAMES = max(1, int(WINDOW_SEC * SAMPLE_FPS))      # = 4
+
 MAX_WIDTH = 512
 MAX_FAIL_COUNT = 2
 
-# 视频/图像采集配置
-REQUIRED_FRAMES = int(os.environ.get("REQUIRED_FRAMES", "4"))
-
-# 推理并发上限（避免 VLM 卡顿时线程无限堆积）
+# 推理并发上限
 MAX_CONCURRENT_INFER = int(os.environ.get("MAX_CONCURRENT_INFER", "4"))
 _INFER_SEM = threading.Semaphore(MAX_CONCURRENT_INFER)
 
@@ -49,8 +52,8 @@ DEFAULT_VERIFICATION_PROMPT = """
 如果上一轮结果与画面一致，输出 {"match": 1, "reason": "简要说明", "correct_result": <上一轮结果>}。
 如果上一轮结果与画面不一致，输出 {"match": 0, "reason": "简要说明", "correct_result": {"has_person": 1, "violations": [...]}}。
 严格按照上述格式输出 JSON，不要添加任何多余的文本或解释。 /no_think
-
 """
+
 
 def _frames_to_video_base64(frames: List[Any]) -> str:
     if not frames:
@@ -62,7 +65,7 @@ def _frames_to_video_base64(frames: List[Any]) -> str:
 
     try:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        fps = 25.0
+        fps = max(1.0, SAMPLE_FPS)  # 用采样帧率，避免拼出来的视频看着抽搐
         out = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
         for frame in frames:
             if frame.shape[1] != width or frame.shape[0] != height:
@@ -144,6 +147,7 @@ class RTSPInferenceClient:
         self._lock = threading.Lock()
         self._is_healthy = False
 
+        # 抽帧 buffer：攒最近 WINDOW_SEC 秒、按 SAMPLE_FPS 采样的画面
         self._valid_frames_buffer: List[Any] = []
 
         self._llm_call_times: List[float] = []
@@ -239,7 +243,6 @@ class RTSPInferenceClient:
         """后台线程执行 VLM 推理；fire-and-forget 调用"""
         if not frames:
             return
-        # 用信号量限制并发，避免堆积
         if not _INFER_SEM.acquire(blocking=False):
             print("[VLM SKIP] Too many concurrent inferences, dropping this batch.")
             return
@@ -252,23 +255,33 @@ class RTSPInferenceClient:
         try:
             messages, media_processing_time_ms = self._build_vlm_messages(frames)
             content, first_api_time_ms = self._call_vlm(messages)
-            # print(f"[VLM] API响应: {content}")
 
             model_json = _parse_json_object(content)
-            result_text = json.dumps(model_json, ensure_ascii=False) if model_json is not None else _strip_code_fences(content)
+            result_text = (
+                json.dumps(model_json, ensure_ascii=False)
+                if model_json is not None else _strip_code_fences(content)
+            )
 
             verification_api_time_ms = 0.0
             verification_media_processing_time_ms = 0.0
 
             if ENABLE_VLM_VERIFICATION:
-                verification_messages, verification_media_processing_time_ms = self._build_verification_messages(frames, result_text)
+                verification_messages, verification_media_processing_time_ms = (
+                    self._build_verification_messages(frames, result_text)
+                )
                 verification_content, verification_api_time_ms = self._call_vlm(verification_messages)
                 print(f"[VLM] 复核响应: {verification_content}")
 
                 verification_json = _parse_json_object(verification_content)
-                verification_text = json.dumps(verification_json, ensure_ascii=False) if verification_json is not None else _strip_code_fences(verification_content)
+                verification_text = (
+                    json.dumps(verification_json, ensure_ascii=False)
+                    if verification_json is not None else _strip_code_fences(verification_content)
+                )
 
-                verification_match = _parse_bool_flag(verification_json.get("match", 0)) if verification_json is not None else False
+                verification_match = (
+                    _parse_bool_flag(verification_json.get("match", 0))
+                    if verification_json is not None else False
+                )
                 if not verification_match:
                     print(f"[VLM MISMATCH] 初次结果与画面不一致，丢弃本次结果。verification={verification_text}")
                     return
@@ -280,7 +293,9 @@ class RTSPInferenceClient:
                 "server_response": {"result": result_text},
                 "media_processing_time_ms": media_processing_time_ms,
                 "verification_media_processing_time_ms": verification_media_processing_time_ms,
-                "frame_count": len(frames)
+                "frame_count": len(frames),
+                "window_sec": WINDOW_SEC,
+                "sample_fps": SAMPLE_FPS,
             }
 
             with self._lock:
@@ -295,11 +310,23 @@ class RTSPInferenceClient:
                 "server_response": {"result": '{"has_person": -1, "violations": []}'},
                 "media_processing_time_ms": 0.0,
                 "verification_media_processing_time_ms": 0.0,
-                "frame_count": 0
+                "frame_count": 0,
+                "window_sec": WINDOW_SEC,
+                "sample_fps": SAMPLE_FPS,
             }
             with self._lock:
                 self._latest_result = empty_result
             print(f"[VLM ERROR] Inference failed: {exc}")
+
+    def _preprocess_frame(self, frame: Any) -> Any:
+        """裁剪 + 缩放，节省 VLM 推理开销"""
+        h, w = frame.shape[:2]
+        crop_w = min(w, 2000)
+        if crop_w > 0:
+            frame = frame[:, 0:crop_w]
+            new_h = int(h * (MAX_WIDTH / crop_w))
+            frame = cv2.resize(frame, (MAX_WIDTH, new_h))
+        return frame
 
     def _inference_loop(self):
         if not self._open_stream():
@@ -307,7 +334,9 @@ class RTSPInferenceClient:
             return
 
         fail_count = 0
-        self._last_infer_ts = 0.0  # 第一次立刻触发；若想先攒帧可改为 time.time()
+        self._last_infer_ts = 0.0       # 第一次立刻触发
+        self._last_sample_ts = 0.0      # 第一次立即采一帧
+        sample_interval = 1.0 / max(SAMPLE_FPS, 0.001)  # 采样间隔：1/2 = 0.5s
 
         while not self._stop_event.is_set():
             ok, frame = self._cap.read()
@@ -320,32 +349,32 @@ class RTSPInferenceClient:
                     self._valid_frames_buffer = []
                 continue
 
-            # 裁剪 + 缩放
-            h, w = frame.shape[:2]
-            crop_w = min(w, 2000)
-            if crop_w > 0:
-                frame = frame[:, 0:crop_w]
-                new_h = int(h * (MAX_WIDTH / crop_w))
-                frame = cv2.resize(frame, (MAX_WIDTH, new_h))
-
+            frame = self._preprocess_frame(frame)
             fail_count = 0
             self._is_healthy = True
 
-            # 滑动窗口：永远只保留最近 REQUIRED_FRAMES 帧
-            self._valid_frames_buffer.append(frame.copy())
-            if len(self._valid_frames_buffer) > REQUIRED_FRAMES:
-                self._valid_frames_buffer = self._valid_frames_buffer[-REQUIRED_FRAMES:]
-
-            # 定时触发：每 interval_sec 触发一次，不等上一次完成
             now = time.time()
+
+            # === 关键：按 SAMPLE_FPS 节奏抽帧，而不是每帧都塞 ===
+            if (now - self._last_sample_ts) >= sample_interval:
+                self._last_sample_ts = now
+                self._valid_frames_buffer.append(frame.copy())
+                # buffer 上限 = REQUIRED_FRAMES，超了就丢最老的
+                if len(self._valid_frames_buffer) > REQUIRED_FRAMES:
+                    self._valid_frames_buffer = self._valid_frames_buffer[-REQUIRED_FRAMES:]
+
+            # === 定时触发推理：每 interval_sec 触发一次，buffer 不够就跳过 ===
             if (now - self._last_infer_ts) >= self.interval_sec:
                 self._last_infer_ts = now
-                frames_to_process = list(self._valid_frames_buffer)
-                threading.Thread(
-                    target=self._process_vlm_inference,
-                    args=(frames_to_process,),
-                    daemon=True
-                ).start()
+                if len(self._valid_frames_buffer) >= REQUIRED_FRAMES:
+                    frames_to_process = list(self._valid_frames_buffer)
+                    threading.Thread(
+                        target=self._process_vlm_inference,
+                        args=(frames_to_process,),
+                        daemon=True
+                    ).start()
+                else:
+                    print(f"[VLM] 缓冲帧不足 ({len(self._valid_frames_buffer)}/{REQUIRED_FRAMES})，等待攒帧...")
 
             time.sleep(0.001)
 
@@ -360,7 +389,11 @@ class RTSPInferenceClient:
         self._thread = threading.Thread(target=self._inference_loop, daemon=True)
         self._thread.start()
         mode = "VIDEO" if USE_VIDEO_MODE else "IMAGE"
-        print(f"RTSP client started. [Mode: {mode}] [Interval: {self.interval_sec}s, fire-and-forget]")
+        print(
+            f"RTSP client started. "
+            f"[Mode: {mode}] [Window: {WINDOW_SEC}s × {SAMPLE_FPS} fps = {REQUIRED_FRAMES} frames] "
+            f"[Infer Interval: {self.interval_sec}s, fire-and-forget]"
+        )
 
     def stop(self):
         self._stop_event.set()
