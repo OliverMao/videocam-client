@@ -1,16 +1,18 @@
-<script setup lang="ts">
+<script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { fetchShowClientData, parseInferenceResult, getWebSocketUrl } from '../api/index.js'
-import type { ShowClientData, InferenceResult } from '../api/types'
 import StreamPlayer from './StreamPlayer.vue'
 import QAZone from './QAZone.vue'
+import { Cigarette, Swords as Fight, Flame as Fire, PersonStanding as Fall } from 'lucide-vue-next'
 
 const streamUrl = import.meta.env.VITE_STREAM_URL
 const combinedStreamUrl = import.meta.env.VITE_COMBINED_STREAM_URL
 const is_Jetson = import.meta.env.VITE_IS_JETSON === 'true'
+const loadDataInterval = parseInt(import.meta.env.VITE_LOAD_DATA_INTERVAL || '500', 10)
+const typingDuration = parseInt(import.meta.env.VITE_TYPING_DURATION || '500', 10)
+const freshInterval = parseInt(import.meta.env.VITE_FRESH_INTERVAL || '3000', 10)
 
-type StreamMode = 'main' | 'combined'
-const streamMode = ref<StreamMode>('main')
+const streamMode = ref('main')
 const activeStreamUrl = computed(() =>
   streamMode.value === 'combined' ? combinedStreamUrl : streamUrl
 )
@@ -18,33 +20,18 @@ function toggleStream() {
   streamMode.value = streamMode.value === 'main' ? 'combined' : 'main'
 }
 
-import {
-  Cigarette,
-  Swords as Fight,
-  Flame as Fire,
-  PersonStanding as Fall
-} from 'lucide-vue-next'
-
-const data = ref<ShowClientData | null>(null)
-const parsedResult = ref<InferenceResult | null>(null)
-const error = ref<string | null>(null)
+const data = ref(null)
+const parsedResult = ref(null)
+const error = ref(null)
 const loading = ref(false)
-const streamStatus = ref<'connecting' | 'playing' | 'error' | 'idle'>('idle')
-
+const streamStatus = ref('idle')
 const location = 'TeleAI-展厅'
 
-interface HistoryEntry {
-  id: number
-  time: string
-  description: string
-  displayedDescription: string
-  violations: string[]
-}
-const descriptionHistory = ref<HistoryEntry[]>([])
+const descriptionHistory = ref([])
 let entryId = 0
 const MAX_HISTORY = 20
 
-const detectionItems: { key: string; label: string; iconComponent: any }[] = [
+const detectionItems = [
   { key: '吸烟', label: '吸烟监测', iconComponent: Cigarette },
   { key: '打架', label: '冲突识别', iconComponent: Fight },
   { key: '摔倒', label: '跌倒监测', iconComponent: Fall },
@@ -52,55 +39,40 @@ const detectionItems: { key: string; label: string; iconComponent: any }[] = [
 
 const violationKeys = computed(() => new Set(parsedResult.value?.violations ?? []))
 
-let intervalId: number | null = null
+let intervalId = null
+let lastAddTime = 0
+let lastHasPerson = null
+let lastViolationsStr = ''
 
-function onStreamError(msg: string) { error.value = msg; streamStatus.value = 'error' }
+function onStreamError(msg) { error.value = msg; streamStatus.value = 'error' }
 function onStreamConnected() { error.value = null; streamStatus.value = 'playing' }
 function onStreamDisconnected() { streamStatus.value = 'idle' }
 
-// --- Virtual list for description history ---
 const ESTIMATED_ITEM_HEIGHT = 80
 const RENDER_BUFFER = 20
-const historyContainer = ref<HTMLElement | null>(null)
+const historyContainer = ref(null)
 const scrollTop = ref(0)
 const containerHeight = ref(0)
-
 const totalHeight = computed(() => descriptionHistory.value.length * ESTIMATED_ITEM_HEIGHT)
-
 const visibleRange = computed(() => {
   const len = descriptionHistory.value.length
   if (len === 0) return { start: 0, end: 0 }
-
   const start = Math.max(0, Math.floor(scrollTop.value / ESTIMATED_ITEM_HEIGHT) - RENDER_BUFFER)
   const end = Math.min(len, Math.ceil((scrollTop.value + containerHeight.value) / ESTIMATED_ITEM_HEIGHT) + RENDER_BUFFER)
   return { start, end }
 })
-
-const visibleItems = computed(() =>
-  descriptionHistory.value.slice(visibleRange.value.start, visibleRange.value.end)
-)
-
+const visibleItems = computed(() => descriptionHistory.value.slice(visibleRange.value.start, visibleRange.value.end))
 const offsetY = computed(() => visibleRange.value.start * ESTIMATED_ITEM_HEIGHT)
 
 function onScroll() {
-  if (historyContainer.value) {
-    scrollTop.value = historyContainer.value.scrollTop
-  }
+  if (historyContainer.value) scrollTop.value = historyContainer.value.scrollTop
 }
-
 function updateContainerHeight() {
-  if (historyContainer.value) {
-    containerHeight.value = historyContainer.value.clientHeight
-  }
+  if (historyContainer.value) containerHeight.value = historyContainer.value.clientHeight
 }
-
-// --- Data loading ---
-let lastAddTime = 0
-let lastHasPerson: boolean | null = null
-let lastViolationsStr = ''
 
 async function loadData() {
-  if (loading.value) return 
+  if (loading.value) return
   try {
     loading.value = true
     error.value = null
@@ -111,22 +83,17 @@ async function loadData() {
       const fullText = parsedResult.value.description
       const currentViolationsStr = (parsedResult.value.violations || []).join(',')
       const currentHasPerson = parsedResult.value.hasPerson
-
       const nowMs = Date.now()
       const timeSinceLastAdd = nowMs - lastAddTime
-
       const isChanged = currentHasPerson !== lastHasPerson || currentViolationsStr !== lastViolationsStr
-      const isTimeout = timeSinceLastAdd >= 3000
-
+      const isTimeout = timeSinceLastAdd >= freshInterval
       if (isChanged || isTimeout) {
         lastAddTime = nowMs
         lastHasPerson = currentHasPerson
         lastViolationsStr = currentViolationsStr
         console.log('New inference result:', fullText, 'Violations:', parsedResult.value.violations)
-        
         const now = new Date()
         const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false }) + '.' + String(now.getMilliseconds()).padStart(3, '0')
-        
         const newEntry = {
           id: entryId++,
           time: timeStr,
@@ -135,29 +102,23 @@ async function loadData() {
           violations: parsedResult.value.violations ?? [],
         }
         descriptionHistory.value.unshift(newEntry)
-        
-        if (descriptionHistory.value.length > MAX_HISTORY) {
-          descriptionHistory.value.length = MAX_HISTORY
-        }
-
+        if (descriptionHistory.value.length > MAX_HISTORY) descriptionHistory.value.length = MAX_HISTORY
         const targetEntry = descriptionHistory.value[0]
-        const duration = 1000 
+        const duration = typingDuration
         const totalChars = fullText.length
-        
         if (totalChars > 0) {
           const startTime = Date.now()
           const timerId = setInterval(() => {
             const elapsed = Date.now() - startTime
             const progress = Math.min(1, elapsed / duration)
             const currentChars = Math.floor(progress * totalChars)
-            
             if (progress >= 1) {
               targetEntry.displayedDescription = fullText
               clearInterval(timerId)
             } else {
               targetEntry.displayedDescription = fullText.slice(0, currentChars) + '█'
             }
-          }, 40) 
+          }, 40)
         } else {
           targetEntry.displayedDescription = fullText
         }
@@ -181,7 +142,7 @@ watch(descriptionHistory, () => {
 
 onMounted(() => {
   loadData()
-  intervalId = window.setInterval(loadData, 10000)
+  intervalId = window.setInterval(loadData, loadDataInterval)
   updateContainerHeight()
   window.addEventListener('resize', updateContainerHeight)
 })
@@ -242,14 +203,19 @@ onUnmounted(() => {
       <section class="tech-panel video-panel" v-if="!is_Jetson">
         <div class="panel-frame">
           <div class="panel-content">
-            <StreamPlayer :streamUrl="activeStreamUrl" @error="onStreamError" @connected="onStreamConnected"
+            <div class="video-top-bar">
+              <span class="video-tip-text">原始视频仅用于展厅展示，云端无法获取原始视频。</span>
+              <button class="stream-toggle-btn" @click="toggleStream">
+                <span class="toggle-label">{{ streamMode === 'main' ? '原始画面' : '隐私处理' }}</span>
+                <span class="toggle-indicator">
+                  <span class="toggle-dot" :class="{ active: streamMode === 'combined' }"></span>
+                </span>
+              </button>
+            </div>
+            <StreamPlayer :style="{ position: 'absolute', width: streamMode === 'main' ? '100%' : '1px', height: streamMode === 'main' ? '100%' : '1px' }" :streamUrl="streamUrl" @error="onStreamError" @connected="onStreamConnected"
               @disconnected="onStreamDisconnected" />
-            <button class="stream-toggle-btn" @click="toggleStream">
-              <span class="toggle-label">{{ streamMode === 'main' ? '原始画面' : '隐私处理' }}</span>
-              <span class="toggle-indicator">
-                <span class="toggle-dot" :class="{ active: streamMode === 'combined' }"></span>
-              </span>
-            </button>
+            <StreamPlayer :style="{ position: 'absolute', width: streamMode === 'combined' ? '100%' : '1px', height: streamMode === 'combined' ? '100%' : '1px' }" :streamUrl="combinedStreamUrl" @error="onStreamError" @connected="onStreamConnected"
+              @disconnected="onStreamDisconnected" />
           </div>
         </div>
       </section>
@@ -487,18 +453,34 @@ onUnmounted(() => {
 .header-tag { font-family: var(--font-tech); font-size: 0.8rem; color: var(--accent-purple); opacity: 0.8; letter-spacing: 0.1em; }
 
 .panel-content { flex: 1; min-height: 0; padding: 1rem; overflow: hidden; display: flex; flex-direction: column; }
-.video-panel .panel-content { padding: 0; background: #020210; position: relative; }
+.video-panel .panel-content { padding: 0; background: #020210; position: relative; display: flex; flex-direction: column; }
 .video-panel :deep(video), .video-panel :deep(canvas) { width: 100%; height: 100%; object-fit: contain; }
 
-.stream-toggle-btn {
+.video-top-bar {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 20;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  background-color: #ff0000;
+  padding: 6px 12px;
+  pointer-events: none;
+}
+.video-tip-text {
+  color: #ffffff;
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+.stream-toggle-btn {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.9rem;
+  padding: 0.3rem 0.8rem;
   background: rgba(5, 5, 30, 0.75);
   border: 1px solid var(--border-tech);
   border-radius: 2rem;
@@ -509,6 +491,7 @@ onUnmounted(() => {
   cursor: pointer;
   backdrop-filter: blur(8px);
   transition: all 0.25s ease;
+  flex-shrink: 0;
 }
 .stream-toggle-btn:hover {
   background: rgba(99, 102, 241, 0.25);

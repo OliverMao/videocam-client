@@ -22,6 +22,10 @@ services:
       - "28001:28001"
     environment:
       - RTSP_URL=rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101
+      - OPENAI_API_BASE=http://116.238.240.2:32726/v1                                                              # 4090调用的vllm地址
+      - MODEL_NAME=/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B   # 模型名称
+      - INTERVAL_SEC=1.0                                                                                # 采集间隔秒数    
+      - REQUIRED_FRAMES=4                                                                              # 固定采集4帧有效的“有人”帧                      
     volumes:
       - ./server/:/app
     depends_on:
@@ -56,9 +60,9 @@ services:
       - "-f"
       - "flv"
       - "-muxdelay"
-      - "5"
+      - "1"
       - "-muxpreload"
-      - "5"
+      - "1"
       - "rtmp://srs:1935/live/livestream"
     depends_on:
       - srs
@@ -102,7 +106,11 @@ services:
       - "4173:4173"
     environment:
       - VITE_STREAM_URL=http://192.168.151.158:8081/live/livestream.flv
-      - VITE_API_HOST=http://192.168.151.158:28001
+      - VITE_COMBINED_STREAM_URL=http://192.168.151.158:8081/live/combined.flv
+      - VITE_API_HOST=http://192.168.151.158:28001/api
+      - VITE_LOAD_DATA_INTERVAL=500
+      - VITE_TYPING_DURATION=500
+      - VITE_FRESH_INTERVAL=3000
     command: ["/bin/sh", "-c", "npm config set registry https://registry.npmmirror.com && npm install && npm run dev -- --host 0.0.0.0"]
     stdin_open: true
     tty: true

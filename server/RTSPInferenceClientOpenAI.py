@@ -1,46 +1,46 @@
-import io
 import json
 import time
 import threading
 import base64
 import cv2
 from typing import Optional, Dict, Any, List
-from PIL import Image
 from pathlib import Path
 from openai import OpenAI
 import tempfile
 import os
 
-from Loop.yolo import YOLODetector
-
 # ================= 全局模式配置 =================
-USE_VIDEO_MODE = False 
-
-# YOLO 检测频率 (Hz)
-YOLO_DETECT_FPS = 3 
+USE_VIDEO_MODE = False
 
 # 是否开启两阶段VLM复核
 ENABLE_VLM_VERIFICATION = False
 # ================================================
-
-DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:32726/v1"   # 4090调用的vllm地址
+# DEFAULT_OPENAI_API = "http://116.238.240.2:30630/v1"  # Jetson
+DEFAULT_OPENAI_API = "http://116.238.240.2:32726/v1"  # 4090
+DEFAULT_OPENAI_API_BASE = os.environ.get("OPENAI_API_BASE", DEFAULT_OPENAI_API)
 # DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:30630/v1"  # Jetson调用的vllm的地址
 DEFAULT_OPENAI_API_KEY = "vllm"
-DEFAULT_MODEL_NAME = "/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B"
-DEFAULT_INTERVAL_SEC = 3.0
+
+# MODEL_NAME = "Qwen3.6-35B-A3B"
+MODEL_NAME = "/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B"
+DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", MODEL_NAME)
+DEFAULT_INTERVAL_SEC = float(os.environ.get("INTERVAL_SEC", "1.0"))
 MAX_WIDTH = 512
 MAX_FAIL_COUNT = 2
 
 # 视频/图像采集配置
-REQUIRED_FRAMES = 4  # 固定采集4帧有效的“有人”帧
+REQUIRED_FRAMES = int(os.environ.get("REQUIRED_FRAMES", "4"))
 
-# DEFAULT_SYSTEM_PROMPT = """
-# 图片中的场景是TeleAI的展厅。请详细分析视频内容，判断是否存在违规行为。违规行为包括但不限于：吸烟、打架、着火、摔倒四类违规行为。
+# 推理并发上限（避免 VLM 卡顿时线程无限堆积）
+MAX_CONCURRENT_INFER = int(os.environ.get("MAX_CONCURRENT_INFER", "4"))
+_INFER_SEM = threading.Semaphore(MAX_CONCURRENT_INFER)
 
-# 首先，统计画面中是否有人物存在。如果没有人，输出 {"has_person": 1, "violations": []}。如果有人物存在，输出 {"has_person": 1, "violations": [...]}，其中 violations 数组列出所有发现的违规行为（如 ["吸烟"] 或 ["吸烟","打架"]）。如果没有任何违规行为，violations 应为空数组 []。
-# 严格按照上述格式输出 JSON，不要添加任何多余的文本或解释。 /no_think
-
-# """
+DEFAULT_SYSTEM_PROMPT = """
+图片中的场景是TeleAI的展厅。请详细分析视频内容，判断是否存在违规行为。违规行为包括但不限于：吸烟、打架、摔倒三类违规行为。
+如果摆出类似抽烟的姿势我们也认为是抽烟，如果摆出打架动作而没有真的在打架也认为是打架。只要人坐在地上，我们也认为是摔倒。
+存在，输出 {"has_person": 1, "violations": [...]}，其中 violations 数组列出所有发现的违规行为（如 ["吸烟"] 或 ["吸烟","打架"]）。如果没有任何违规行为，violations 应为空数组 []。
+严格按照上述格式输出 JSON，不要添加任何多余的文本或解释，不要开启思考模式。
+"""
 
 DEFAULT_VERIFICATION_PROMPT = """
 你现在要核验上一轮输出是否与当前画面内容对应。
@@ -52,17 +52,6 @@ DEFAULT_VERIFICATION_PROMPT = """
 
 """
 
-# 因为yolo连续4帧检测到人物，所以VLM直接判断是否存在违规行为，不再让VLM判断是否有人，避免重复和矛盾的输出
-
-DEFAULT_SYSTEM_PROMPT = """
-图片中的场景是TeleAI的展厅。请详细分析视频内容，判断是否存在违规行为。违规行为包括但不限于：吸烟、打架、摔倒三类违规行为。
-如果摆出类似抽烟的姿势我们也认为是抽烟，如果摆出打架动作而没有真的在打架也认为是打架。只要人坐在地上，我们也认为是摔倒。
-存在，输出 {"has_person": 1, "violations": [...]}，其中 violations 数组列出所有发现的违规行为（如 ["吸烟"] 或 ["吸烟","打架"]）。如果没有任何违规行为，violations 应为空数组 []。
-严格按照上述格式输出 JSON，不要添加任何多余的文本或解释。 /no_think
-
-"""
-
-
 def _frames_to_video_base64(frames: List[Any]) -> str:
     if not frames:
         return ""
@@ -73,7 +62,8 @@ def _frames_to_video_base64(frames: List[Any]) -> str:
 
     try:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(temp_path, fourcc, YOLO_DETECT_FPS, (width, height))
+        fps = 25.0
+        out = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
         for frame in frames:
             if frame.shape[1] != width or frame.shape[0] != height:
                 frame = cv2.resize(frame, (width, height))
@@ -143,7 +133,6 @@ class RTSPInferenceClient:
         self.max_fail_count = max_fail_count
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        self.detector = YOLODetector("./Loop/yolo26n.pt")
         self.openai_client = OpenAI(api_key=openai_api_key, base_url=openai_api_base)
         self.model_name = model_name
 
@@ -152,13 +141,15 @@ class RTSPInferenceClient:
         self._stop_event = threading.Event()
 
         self._latest_result: Optional[Dict[str, Any]] = None
-        self._person_detected = False
         self._lock = threading.Lock()
         self._is_healthy = False
-        
+
         self._valid_frames_buffer: List[Any] = []
-        self._last_yolo_time = 0.0
-        self._yolo_interval = 1.0 / YOLO_DETECT_FPS if YOLO_DETECT_FPS > 0 else 0.0
+
+        self._llm_call_times: List[float] = []
+        self._llm_call_count = 0
+        self._total_llm_time_ms = 0.0
+        self._cost_log_path = self.save_dir / "costtime.log"
 
     def _open_stream(self) -> bool:
         if self._cap is not None:
@@ -193,7 +184,7 @@ class RTSPInferenceClient:
 
         return user_content
 
-    def _build_vlm_messages(self, frames: List[Any]) -> tuple[List[Dict], float]:
+    def _build_vlm_messages(self, frames: List[Any]) -> tuple:
         t_start = time.time()
         user_content = self._build_media_content(frames)
         user_content.append({"type": "text", "text": "请分析这段监控内容。"})
@@ -203,7 +194,7 @@ class RTSPInferenceClient:
         ]
         return messages, (time.time() - t_start) * 1000
 
-    def _build_verification_messages(self, frames: List[Any], initial_result_text: str) -> tuple[List[Dict], float]:
+    def _build_verification_messages(self, frames: List[Any], initial_result_text: str) -> tuple:
         t_start = time.time()
         user_content = self._build_media_content(frames)
         user_content.append({
@@ -216,27 +207,52 @@ class RTSPInferenceClient:
         ]
         return messages, (time.time() - t_start) * 1000
 
-    def _call_vlm(self, messages: List[Dict[str, Any]]) -> tuple[str, float]:
+    def _log_llm_call_time(self, call_time_ms: float):
+        self._llm_call_count += 1
+        self._total_llm_time_ms += call_time_ms
+        self._llm_call_times.append(call_time_ms)
+        avg_time_ms = self._total_llm_time_ms / self._llm_call_count
+
+        log_entry = f"Call #{self._llm_call_count}: {call_time_ms:.2f}ms, Average: {avg_time_ms:.2f}ms\n"
+        try:
+            with open(self._cost_log_path, "a", encoding="utf-8") as f:
+                f.write(log_entry)
+        except Exception as e:
+            print(f"[ERROR] Failed to write costtime.log: {e}")
+
+    def _call_vlm(self, messages: List[Dict[str, Any]]) -> tuple:
         t_total_start = time.time()
         response = self.openai_client.chat.completions.create(
             model=self.model_name,
             messages=messages,
             max_tokens=2048,
-            temperature=0.01,
-            response_format={"type": "json_object"}
+            temperature=0.0001,
+            response_format={"type": "json_object"},
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}}
         )
         content = response.choices[0].message.content.strip()
-        return content, (time.time() - t_total_start) * 1000
+        call_time_ms = (time.time() - t_total_start) * 1000
+        self._log_llm_call_time(call_time_ms)
+        return content, call_time_ms
 
     def _process_vlm_inference(self, frames: List[Any]):
-        """同步阻塞执行 VLM 推理，适配 QPS=1 的场景"""
+        """后台线程执行 VLM 推理；fire-and-forget 调用"""
         if not frames:
             return
+        # 用信号量限制并发，避免堆积
+        if not _INFER_SEM.acquire(blocking=False):
+            print("[VLM SKIP] Too many concurrent inferences, dropping this batch.")
+            return
+        try:
+            self._do_inference(frames)
+        finally:
+            _INFER_SEM.release()
+
+    def _do_inference(self, frames: List[Any]):
         try:
             messages, media_processing_time_ms = self._build_vlm_messages(frames)
             content, first_api_time_ms = self._call_vlm(messages)
-            print(f"[VLM] VLM完成，")
-            print(f"[VLM] API响应: {content}")
+            # print(f"[VLM] API响应: {content}")
 
             model_json = _parse_json_object(content)
             result_text = json.dumps(model_json, ensure_ascii=False) if model_json is not None else _strip_code_fences(content)
@@ -264,15 +280,12 @@ class RTSPInferenceClient:
                 "server_response": {"result": result_text},
                 "media_processing_time_ms": media_processing_time_ms,
                 "verification_media_processing_time_ms": verification_media_processing_time_ms,
-                "frame_count": len(frames),
-                "capture_fps": YOLO_DETECT_FPS
+                "frame_count": len(frames)
             }
 
             with self._lock:
                 self._latest_result = final_result
             print(f"[VLM RESULT] {final_result}")
-            print(f"[VLM DONE] Frames: {len(frames)}, Total: {first_api_time_ms + verification_api_time_ms:.0f}ms")
-            
 
         except Exception as exc:
             empty_result = {
@@ -282,8 +295,7 @@ class RTSPInferenceClient:
                 "server_response": {"result": '{"has_person": -1, "violations": []}'},
                 "media_processing_time_ms": 0.0,
                 "verification_media_processing_time_ms": 0.0,
-                "frame_count": 0,
-                "capture_fps": YOLO_DETECT_FPS
+                "frame_count": 0
             }
             with self._lock:
                 self._latest_result = empty_result
@@ -295,12 +307,9 @@ class RTSPInferenceClient:
             return
 
         fail_count = 0
-        temp_yolo_path = self.save_dir / "yolo_temp.png"
-        self._last_yolo_time = time.time() 
+        self._last_infer_ts = 0.0  # 第一次立刻触发；若想先攒帧可改为 time.time()
 
         while not self._stop_event.is_set():
-            now = time.time()
-
             ok, frame = self._cap.read()
             if not ok:
                 fail_count += 1
@@ -311,7 +320,7 @@ class RTSPInferenceClient:
                     self._valid_frames_buffer = []
                 continue
 
-            # 从左侧裁剪0-2000px，然后缩放至 MAX_WIDTH
+            # 裁剪 + 缩放
             h, w = frame.shape[:2]
             crop_w = min(w, 2000)
             if crop_w > 0:
@@ -322,64 +331,26 @@ class RTSPInferenceClient:
             fail_count = 0
             self._is_healthy = True
 
-            # 1. 频率控制：未到检测时间点则跳过
-            if now - self._last_yolo_time < self._yolo_interval:
-                continue 
-            
-            # 2. 执行 YOLO 检测
-            self._last_yolo_time = now
-            person_detected = False
-            try:
-                start_time = time.time()
-                cv2.imwrite(str(temp_yolo_path), frame)
-                person_detected = self.detector.has_person(temp_yolo_path)
-                print('[YOLO] Person detected:', person_detected,'cost time:', time.time() - start_time)
-            except Exception as e:
-                print(f"YOLO detection error: {e}")
+            # 滑动窗口：永远只保留最近 REQUIRED_FRAMES 帧
+            self._valid_frames_buffer.append(frame.copy())
+            if len(self._valid_frames_buffer) > REQUIRED_FRAMES:
+                self._valid_frames_buffer = self._valid_frames_buffer[-REQUIRED_FRAMES:]
 
-            with self._lock:
-                self._person_detected = person_detected
-
-            # 3. 连续性状态机
-            if person_detected:
-                self._valid_frames_buffer.append(frame.copy())
-                
-                if len(self._valid_frames_buffer) >= REQUIRED_FRAMES:
-                    frames_to_process = self._valid_frames_buffer[-REQUIRED_FRAMES:]
-                    self._valid_frames_buffer = []
-                    
-                    # print(f"[TRIGGER] {REQUIRED_FRAMES} continuous frames collected. Blocking for VLM...")  中文
-                    print(f"[验证]" f"{REQUIRED_FRAMES} 连续帧已收集，正在进行 VLM 推理...")
-                    
-                    # 【关键修改】同步阻塞调用，不再开启新线程
-                    # 在 VLM 返回结果前，整个采集循环会暂停，天然符合 QPS=1 的限制
-                    self._process_vlm_inference(frames_to_process)
-            else:
-                if self._valid_frames_buffer:
-                    self._valid_frames_buffer = []
-                
-                # 更新状态为无人
-                empty_result = {
-                    "mode": "video" if USE_VIDEO_MODE else "image",
-                    "api_time_ms": 0.0,
-                    "total_api_time_ms": 0.0,
-                    "server_response": {"result": '{"has_person": 0, "violations": []}'},
-                    "media_processing_time_ms": 0.0,
-                    "verification_media_processing_time_ms": 0.0,
-                    "frame_count": 0,
-                    "capture_fps": YOLO_DETECT_FPS
-                }
-                with self._lock:
-                    self._latest_result = empty_result
+            # 定时触发：每 interval_sec 触发一次，不等上一次完成
+            now = time.time()
+            if (now - self._last_infer_ts) >= self.interval_sec:
+                self._last_infer_ts = now
+                frames_to_process = list(self._valid_frames_buffer)
+                threading.Thread(
+                    target=self._process_vlm_inference,
+                    args=(frames_to_process,),
+                    daemon=True
+                ).start()
 
             time.sleep(0.001)
 
         if self._cap is not None:
             self._cap.release()
-        try:
-            temp_yolo_path.unlink(missing_ok=True)
-        except Exception:
-            pass
         print("Inference loop stopped.")
 
     def start(self):
@@ -389,7 +360,7 @@ class RTSPInferenceClient:
         self._thread = threading.Thread(target=self._inference_loop, daemon=True)
         self._thread.start()
         mode = "VIDEO" if USE_VIDEO_MODE else "IMAGE"
-        print(f"RTSP client started. [Mode: {mode}] [YOLO: {YOLO_DETECT_FPS}FPS] [Sync Blocking VLM]")
+        print(f"RTSP client started. [Mode: {mode}] [Interval: {self.interval_sec}s, fire-and-forget]")
 
     def stop(self):
         self._stop_event.set()
@@ -400,10 +371,6 @@ class RTSPInferenceClient:
     def get_latest_result(self) -> Optional[Dict[str, Any]]:
         with self._lock:
             return self._latest_result
-
-    def get_person_detected(self) -> bool:
-        with self._lock:
-            return self._person_detected
 
     @property
     def is_healthy(self) -> bool:

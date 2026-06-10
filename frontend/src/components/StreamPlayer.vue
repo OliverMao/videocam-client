@@ -1,22 +1,21 @@
-<script setup lang="ts">
+<script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import flvjs from 'flv.js'
 
-const props = defineProps<{
-  streamUrl: string
-}>()
+const props = defineProps({
+  streamUrl: {
+    type: String,
+    required: true
+  }
+})
 
-const emit = defineEmits<{
-  (e: 'error', error: string): void
-  (e: 'connected'): void
-  (e: 'disconnected'): void
-}>()
+const emit = defineEmits(['error', 'connected', 'disconnected'])
 
-const videoRef = ref<HTMLVideoElement | null>(null)
-const status = ref<'connecting' | 'playing' | 'error' | 'idle'>('idle')
+const videoRef = ref(null)
+const status = ref('idle')
 
-let player: flvjs.Player | null = null
-let refreshTimer: number | null = null
+let player = null
+let refreshTimer = null
 let isRefreshing = false
 
 // 清理播放器实例
@@ -47,12 +46,10 @@ function clearRefreshTimer() {
 // 初始化播放器
 function initPlayer() {
   cleanup()
-  
   if (!videoRef.value || !props.streamUrl) {
     console.warn('[StreamPlayer] No video ref or stream URL')
     return
   }
-
   if (!flvjs.isSupported()) {
     const msg = '当前浏览器不支持 FLV 播放'
     console.error(msg)
@@ -60,16 +57,14 @@ function initPlayer() {
     emit('error', msg)
     return
   }
-
   status.value = 'connecting'
-
   try {
     player = flvjs.createPlayer(
       {
         type: 'flv',
         url: props.streamUrl,
         isLive: true,
-        hasAudio: false 
+        hasAudio: false
       },
       {
         enableWorker: false,
@@ -81,35 +76,30 @@ function initPlayer() {
         fixAudioTimestampGap: false
       }
     )
-
     player.attachMediaElement(videoRef.value)
-    
     // 错误监听
     player.on(flvjs.Events.ERROR, (errType, errDetail, errInfo) => {
       console.error('[FLV Error]', errType, errDetail, errInfo)
       if (errType === flvjs.ErrorTypes.NETWORK_ERROR) {
-         status.value = 'error'
-         emit('error', `网络错误: ${errDetail}`)
-         scheduleReconnect()
+        status.value = 'error'
+        emit('error', `网络错误: ${errDetail}`)
+        scheduleReconnect()
       } else if (errType === flvjs.ErrorTypes.MEDIA_ERROR) {
-         status.value = 'error'
-         emit('error', `媒体错误: ${errDetail}`)
-         scheduleReconnect()
+        status.value = 'error'
+        emit('error', `媒体错误: ${errDetail}`)
+        scheduleReconnect()
       }
     })
-
     // 加载成功/开始播放监听
     player.on(flvjs.Events.MEDIA_INFO, (info) => {
       console.log('[FLV Media Info]', info)
       status.value = 'playing'
       emit('connected')
     })
-
     player.load()
     player.play().catch((e) => {
       console.warn('[StreamPlayer] Autoplay prevented:', e)
     })
-
   } catch (e) {
     console.error('[StreamPlayer] Init exception', e)
     status.value = 'error'
@@ -140,13 +130,16 @@ onUnmounted(() => {
 })
 
 // 支持动态切换流地址
-watch(() => props.streamUrl, (newUrl, oldUrl) => {
-  if (newUrl && newUrl !== oldUrl) {
-    console.log('[StreamPlayer] URL changed, re-initializing...')
-    clearRefreshTimer()
-    initPlayer()
+watch(
+  () => props.streamUrl,
+  (newUrl, oldUrl) => {
+    if (newUrl && newUrl !== oldUrl) {
+      console.log('[StreamPlayer] URL changed, re-initializing...')
+      clearRefreshTimer()
+      initPlayer()
+    }
   }
-})
+)
 
 defineExpose({ status })
 </script>
@@ -160,9 +153,6 @@ defineExpose({ status })
       autoplay
       playsinline
     />
-    <div class="video-tip">
-      原始视频仅用于展厅展示，云端无法获取原始视频。
-    </div>
   </div>
 </template>
 
@@ -174,29 +164,10 @@ defineExpose({ status })
   background-color: #000;
   overflow: hidden;
 }
-
 .stream-video {
   width: 100%;
   height: 100%;
   object-fit: contain;
   background: #000;
-}
-
-.video-tip {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  background-color: #ff0000;
-  color: #ffffff;
-  text-align: center;
-  padding: 6px 0;
-  font-size: 28px;
-  font-weight: 500;
-  opacity: 0.92;
-  z-index: 10;
-  pointer-events: none;
-  backdrop-filter: blur(2px);
-  letter-spacing: 0.5px;
 }
 </style>

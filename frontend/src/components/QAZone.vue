@@ -1,35 +1,15 @@
-<script setup lang="ts">
+<script setup>
 import { ref, nextTick } from 'vue'
 import { marked } from 'marked'
 
 const apiHost = import.meta.env.VITE_API_HOST
 
-interface QAStep {
-  title: string
-  type: 'thinking' | 'todo' | 'tool_call' | 'answer' | 'analysis'
-  content: string
-  status: 'pending' | 'active' | 'done'
-}
-
-interface AnalysisContent {
-  thinking: string
-  todos: { content: string; status: string }[]
-}
-
-interface QAMessage {
-  id: number
-  role: 'user' | 'assistant'
-  content: string
-  displayedContent: string
-  steps?: QAStep[]
-}
-
 const qaInput = ref('')
-const qaMessages = ref<QAMessage[]>([])
+const qaMessages = ref([])
 const qaProcessing = ref(false)
 const qaActive = ref(false)
 let qaMsgId = 0
-const qaPanelRef = ref<HTMLElement | null>(null)
+const qaPanelRef = ref(null)
 
 const timeRangeOptions = [
   { label: '15分钟', value: '15m' },
@@ -43,20 +23,19 @@ const qaTimeRange = ref('1h')
 const qaTimeOpen = ref(false)
 
 function toggleTimeDropdown() { qaTimeOpen.value = !qaTimeOpen.value }
-
-function selectTime(val: string) {
+function selectTime(val) {
   qaTimeRange.value = val
   qaTimeOpen.value = false
 }
 
-function formatDatetime(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
+function formatDatetime(d) {
+  const pad = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
-function buildTimeRangeText(): string {
+function buildTimeRangeText() {
   const end = new Date()
-  const offsetMs: Record<string, number> = {
+  const offsetMs = {
     '15m': 15 * 60 * 1000,
     '1h': 60 * 60 * 1000,
     '4h': 4 * 60 * 60 * 1000,
@@ -68,23 +47,22 @@ function buildTimeRangeText(): string {
   return `查询时间范围：${formatDatetime(start)}~${formatDatetime(end)}`
 }
 
-function handlePresetClick(text: string) {
+function handlePresetClick(text) {
   qaInput.value = text
   handleQASend()
 }
 
-function renderMarkdown(text: string): string {
-  return marked.parse(text, { async: false }) as string
+function renderMarkdown(text) {
+  return marked.parse(text, { async: false })
 }
 
-function parseTodos(content: string): { content: string; status: string }[] {
+function parseTodos(content) {
   try { return JSON.parse(content) } catch { return [] }
 }
 
-function parseAnalysis(content: string): AnalysisContent {
+function parseAnalysis(content) {
   try { return JSON.parse(content) } catch { return { thinking: content, todos: [] } }
 }
-
 
 async function handleQASend() {
   const text = qaInput.value.trim()
@@ -98,13 +76,13 @@ async function handleQASend() {
 
   const questionWithTime = `${text}\n${buildTimeRangeText()}`
 
-  const msg: QAMessage = { id: qaMsgId++, role: 'assistant', content: '', displayedContent: '', steps: [] }
+  const msg = { id: qaMsgId++, role: 'assistant', content: '', displayedContent: '', steps: [] }
   qaMessages.value.push(msg)
 
   nextTick(() => qaPanelRef.value?.scrollTo({ top: qaPanelRef.value.scrollHeight, behavior: 'smooth' }))
 
   if (import.meta.env.VITE_QA_DEV_MODE === 'true') {
-    msg.steps!.push({
+    msg.steps.push({
       title: '回答',
       type: 'answer',
       content: '本智能助手正在闭关，等我学成归来再为你解答~',
@@ -117,24 +95,24 @@ async function handleQASend() {
 
   function findMsg() { return qaMessages.value.find(m => m.id === msg.id) }
 
-  function applyEvent(ev: any) {
+  function applyEvent(ev) {
     const m = findMsg()
     if (!m) return
     if (ev.event === 'step_add') {
       const s = ev.step
-      m.steps![s.idx] = { title: s.title, type: s.type, content: s.content ?? '', status: s.status ?? 'done' }
+      m.steps[s.idx] = { title: s.title, type: s.type, content: s.content ?? '', status: s.status ?? 'done' }
     } else if (ev.event === 'step_update') {
-      const s = m.steps![ev.idx]
+      const s = m.steps[ev.idx]
       if (s) { if (ev.content !== undefined) s.content = ev.content; if (ev.status) s.status = ev.status }
     } else if (ev.event === 'step_status') {
-      const s = m.steps![ev.idx]
+      const s = m.steps[ev.idx]
       if (s) s.status = ev.status
     } else if (ev.event === 'answer_chunk') {
-      const s = m.steps![ev.idx]
+      const s = m.steps[ev.idx]
       if (s) s.content += ev.text
       m.displayedContent += ev.text
     } else if (ev.event === 'error') {
-      m.steps!.push({ title: '错误', type: 'thinking', content: ev.message, status: 'done' })
+      m.steps.push({ title: '错误', type: 'thinking', content: ev.message, status: 'done' })
     }
     nextTick(() => qaPanelRef.value?.scrollTo({ top: qaPanelRef.value.scrollHeight, behavior: 'smooth' }))
   }
@@ -165,9 +143,9 @@ async function handleQASend() {
         }
       }
     }
-  } catch (e: any) {
+  } catch (e) {
     const m = findMsg()
-    if (m) m.steps!.push({ title: '错误', type: 'thinking', content: e.message || '请求失败', status: 'done' })
+    if (m) m.steps.push({ title: '错误', type: 'thinking', content: e.message || '请求失败', status: 'done' })
   } finally {
     qaProcessing.value = false
   }
