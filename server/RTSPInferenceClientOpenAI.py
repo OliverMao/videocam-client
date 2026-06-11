@@ -15,21 +15,22 @@ USE_VIDEO_MODE = False
 # 是否开启两阶段VLM复核
 ENABLE_VLM_VERIFICATION = False
 # ================================================
-# DEFAULT_OPENAI_API = "http://116.238.240.2:30630/v1"  # Jetson
-DEFAULT_OPENAI_API = "http://116.238.240.2:32726/v1"  # 4090
+DEFAULT_OPENAI_API = "http://116.238.240.2:30630/v1"  # Jetson
+# DEFAULT_OPENAI_API = "http://116.238.240.2:32726/v1"  # 4090
 DEFAULT_OPENAI_API_BASE = os.environ.get("OPENAI_API_BASE", DEFAULT_OPENAI_API)
 DEFAULT_OPENAI_API_KEY = "vllm"
-
-MODEL_NAME = "/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B"
+MODEL_NAME="Qwen3.6-35B-A3B"
+# MODEL_NAME = "/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B"
 DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", MODEL_NAME)
 
 # 推理触发间隔（每 1 秒触发一次）
 DEFAULT_INTERVAL_SEC = float(os.environ.get("INTERVAL_SEC", "1.0"))
 
-# 抽帧相关：2 秒窗口 × 2 fps = 4 帧
-WINDOW_SEC = float(os.environ.get("WINDOW_SEC", "2.0"))     # 时间窗口长度
+# 抽帧相关：6 秒窗口 × 2 fps = 12 帧（实际取14帧）
+WINDOW_SEC = float(os.environ.get("WINDOW_SEC", "6.0"))     # 时间窗口长度
 SAMPLE_FPS = float(os.environ.get("SAMPLE_FPS", "2.0"))     # 每秒抽几帧
-REQUIRED_FRAMES = max(1, int(WINDOW_SEC * SAMPLE_FPS))      # = 4
+REQUIRED_FRAMES =     8                                  # 缓冲区大小：存储14帧
+INFERENCE_FRAMES = 4                                        # 每次推理发送前4帧
 
 MAX_WIDTH = 512
 MAX_FAIL_COUNT = 2
@@ -367,7 +368,9 @@ class RTSPInferenceClient:
             if (now - self._last_infer_ts) >= self.interval_sec:
                 self._last_infer_ts = now
                 if len(self._valid_frames_buffer) >= REQUIRED_FRAMES:
-                    frames_to_process = list(self._valid_frames_buffer)
+                    # FIFO队列：发送前4帧（最早的4帧，实现6秒延时）
+                    frames_to_process = list(self._valid_frames_buffer[:INFERENCE_FRAMES])
+                    print(f"[VLM] 发送前{INFERENCE_FRAMES}帧，缓冲区: {len(self._valid_frames_buffer)}帧")
                     threading.Thread(
                         target=self._process_vlm_inference,
                         args=(frames_to_process,),
@@ -391,7 +394,7 @@ class RTSPInferenceClient:
         mode = "VIDEO" if USE_VIDEO_MODE else "IMAGE"
         print(
             f"RTSP client started. "
-            f"[Mode: {mode}] [Window: {WINDOW_SEC}s × {SAMPLE_FPS} fps = {REQUIRED_FRAMES} frames] "
+            f"[Mode: {mode}] [Buffer: {REQUIRED_FRAMES} frames] [Infer: {INFERENCE_FRAMES} frames, FIFO] "
             f"[Infer Interval: {self.interval_sec}s, fire-and-forget]"
         )
 

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>摄像头预览 - MediaMTX</title>
+  <style>
+    body { background:#0e0e10; color:#eee; font-family:system-ui,sans-serif; margin:0; padding:24px; }
+    h1 { margin:0 0 16px; font-size:20px; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap:16px; max-width:1400px; }
+    .card { background:#1c1c1f; border-radius:12px; padding:14px; }
+    .card h2 { margin:0 0 8px; font-size:14px; color:#aaa; }
+    video, .hls-wrap { width:100%; background:#000; border-radius:8px; aspect-ratio:16/9; }
+    .controls { margin-top:8px; display:flex; gap:8px; }
+    button { background:#2d2d33; color:#eee; border:0; padding:6px 12px; border-radius:6px; cursor:pointer; }
+    button:hover { background:#3d3d44; }
+    code { color:#7fdbff; }
+  </style>
+</head>
+<body>
+  <h1>📹 海康摄像头预览 <small style="color:#888;font-size:12px">via MediaMTX</small></h1>
+
+  <div class="row">
+    <!-- WebRTC:延迟 200~400ms,推荐 -->
+    <div class="card">
+      <h2>WebRTC (低延迟 ≈300ms)</h2>
+      <video id="rtc" autoplay playsinline controls muted></video>
+      <div class="controls">
+        <button onclick="startRTC()">▶ 开始</button>
+        <button onclick="stopRTC()">⏹ 停止</button>
+      </div>
+    </div>
+
+    <!-- HLS:用 hls.js,延迟 1~3s -->
+    <div class="card">
+      <h2>HLS (兼容性好,延迟 ≈2s)</h2>
+      <video id="hls" autoplay playsinline controls muted></video>
+      <div class="controls">
+        <button onclick="startHLS()">▶ 开始</button>
+      </div>
+    </div>
+  </div>
+
+  <p style="color:#888;margin-top:16px">
+    地址:<code id="base"></code> &nbsp;|&nbsp;
+  </p>
+
+  <script>
+    // MediaMTX 跑在哪台机器就填哪个 IP
+    const HOST = '192.168.151.158';          // 自动用当前访问页面的域名/IP
+    document.getElementById('base').textContent = HOST;
+
+    // ============ WebRTC ============
+    let pc, videoEl = document.getElementById('rtc');
+
+    async function startRTC() {
+      stopRTC();
+      pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      pc.ontrack = e => { videoEl.srcObject = e.streams[0]; };
+      pc.addTransceiver('video', { direction: 'sendrecv' });
+      pc.addTransceiver('audio', { direction: 'sendrecv' });
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // MediaMTX WHIP 协议(用 cam_sub 看副码流,带宽小;要主码流改 cam_main)
+      const res = await fetch(`http://${HOST}:8889/cam_main/whep`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp' },
+        body: offer.sdp
+      });
+      const answer = await res.text();
+      await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+    }
+
+    function stopRTC() {
+      if (pc) { pc.close(); pc = null; }
+      videoEl.srcObject = null;
+    }
+
+    // ============ HLS ============
+    function startHLS() {
+      const v = document.getElementById('hls');
+      // 优先用 Safari 原生,否则动态加载 hls.js
+      if (v.canPlayType('application/vnd.apple.mpegurl')) {
+        v.src = `http://${HOST}:8888/cam_main/index.m3u8`;
+      } else {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.15';
+        s.onload = () => {
+          const hls = new Hls();
+          hls.loadSource(`http://${HOST}:8888/cam_main/index.m3u8`);
+          hls.attachMedia(v);
+        };
+        document.head.appendChild(s);
+      }
+    }
+  </script>
+</body>
+</html>

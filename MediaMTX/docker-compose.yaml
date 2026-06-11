@@ -1,0 +1,22 @@
+version: "3.8"
+
+
+services:
+
+  mediamtx:
+
+    image: bluenviron/mediamtx:latest
+
+    container_name: mediamtx
+
+    restart: unless-stopped
+
+    network_mode: host   # 方便局域网内任何设备直接访问;不需要的话可以改成 ports
+
+    volumes:
+
+      - ./mediamtx.yml:/mediamtx.yml
+
+      - ./hls:/hls      # HLS 切片输出目录(可选,留着方便调试)
+
+      - ./recordings:/recordings  # 录像目录(可选)

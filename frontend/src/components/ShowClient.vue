@@ -212,7 +212,7 @@ onUnmounted(() => {
                 </span>
               </button>
             </div>
-            <StreamPlayer :style="{ position: 'absolute', width: streamMode === 'main' ? '100%' : '1px', height: streamMode === 'main' ? '100%' : '1px' }" :streamUrl="streamUrl" @error="onStreamError" @connected="onStreamConnected"
+            <StreamPlayer :style="{ position: 'absolute', width: streamMode === 'main' ? '100%' : '1px', height: streamMode === 'main' ? '100%' : '1px' }" :streamUrl="streamUrl" :cropRight="streamMode === 'main'" @error="onStreamError" @connected="onStreamConnected"
               @disconnected="onStreamDisconnected" />
             <StreamPlayer :style="{ position: 'absolute', width: streamMode === 'combined' ? '100%' : '1px', height: streamMode === 'combined' ? '100%' : '1px' }" :streamUrl="combinedStreamUrl" @error="onStreamError" @connected="onStreamConnected"
               @disconnected="onStreamDisconnected" />

@@ -1,19 +1,19 @@
 version: '3.8'
 
 services:
-  srs:
-    image: registry.cn-hangzhou.aliyuncs.com/ossrs/srs:5
-    container_name: srs
-    ports:
-      - "1935:1935"
-      - "1985:1985"
-      - "8081:8080"
-      - "18000:8000/udp"
-    environment:
-      - CANDIDATE=192.168.151.158
-    stdin_open: true
-    tty: true
-    restart: unless-stopped
+  # srs:
+  #   image: registry.cn-hangzhou.aliyuncs.com/ossrs/srs:5
+  #   container_name: srs
+  #   ports:
+  #     - "1935:1935"
+  #     - "1985:1985"
+  #     - "8081:8080"
+  #     - "18000:8000/udp"
+  #   environment:
+  #     - CANDIDATE=192.168.151.158
+  #   stdin_open: true
+  #   tty: true
+  #   restart: unless-stopped
 
   app:
     build: ./server
@@ -28,66 +28,74 @@ services:
       - REQUIRED_FRAMES=4                                                                              # 固定采集4帧有效的“有人”帧                      
     volumes:
       - ./server/:/app
-    depends_on:
-      - srs
+    # depends_on:
+    #   - srs
     restart: unless-stopped
 
-  ffmpeg-stream:
-    image: linuxserver/ffmpeg
-    container_name: ffmpeg-stream
-    # 使用数组格式，避免 YAML 多行字符串解析问题
-    command:
-      - "-rtsp_transport"
-      - "tcp"
-      - "-timeout"
-      - "5000000"
-      - "-i"
-      - "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"
-      - "-vf"
-      - "crop=2000:ih:0:0"
-      - "-c:v"
-      - "libx264"
-      - "-preset"
-      - "fast"
-      - "-tune"
-      - "zerolatency"
-      - "-b:v"
-      - "4M"
-      - "-c:a"
-      - "aac"
-      - "-b:a"
-      - "128k"
-      - "-f"
-      - "flv"
-      - "-muxdelay"
-      - "1"
-      - "-muxpreload"
-      - "1"
-      - "rtmp://srs:1935/live/livestream"
-    depends_on:
-      - srs
-    restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "50m"
-        max-file: "3"
+  # ffmpeg-stream:
+  #   image: linuxserver/ffmpeg
+  #   container_name: ffmpeg-stream
+  #   # 使用数组格式，避免 YAML 多行字符串解析问题
+  #   command:
+  #     - "-rtsp_transport"
+  #     - "tcp"
+  #     - "-timeout"
+  #     - "5000000"
+  #     - "-i"
+  #     - "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"
+  #     - "-vf"
+  #     - "crop=2000:ih:0:0"
+  #     - "-c:v"
+  #     - "libx264"
+  #     - "-preset"
+  #     - "fast"
+  #     - "-tune"
+  #     - "zerolatency"
+  #     - "-b:v"
+  #     - "4M"
+  #     - "-c:a"
+  #     - "aac"
+  #     - "-b:a"
+  #     - "128k"
+  #     - "-f"
+  #     - "flv"
+  #     - "-muxdelay"
+  #     - "1"
+  #     - "-muxpreload"
+  #     - "1"
+  #     - "rtmp://srs:1935/live/livestream"
+  #   depends_on:
+  #     - srs
+  #   restart: unless-stopped
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "50m"
+  #       max-file: "3"
 
   pipeline:
     build: ./pipeline
     container_name: video-pipeline
+    network_mode: host
+    privileged: true
+    command: ["uv", "run", "pipeline.py", "stream", "--fps", "0.3"]
     environment:
-      # 从 SRS 拉流,避免与 ffmpeg-stream 争抢摄像头 RTSP 连接数
-      - RTSP_URL=rtmp://srs:1935/live/livestream
-      - RTMP_BASE=rtmp://srs:1935/live
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      - RTSP_URL=rtsp://127.0.0.1:8554/cam_main
+      - RTMP_BASE=rtmp://127.0.0.1:1935/live
       - BLUR_KERNEL=31
       - NOISE_STRENGTH=30
       - PYTHONUNBUFFERED=1
     volumes:
       - ./pipeline:/app
-    depends_on:
-      - srs
-      - ffmpeg-stream
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -102,19 +110,30 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
-    ports:
-      - "4173:4173"
+    network_mode: host
     environment:
-      - VITE_STREAM_URL=http://192.168.151.158:8081/live/livestream.flv
-      - VITE_COMBINED_STREAM_URL=http://192.168.151.158:8081/live/combined.flv
+      - VITE_STREAM_URL=http://192.168.151.158:8889/cam_main/whep
+      - VITE_COMBINED_STREAM_URL=http://192.168.151.158:8889/live/combined/whep
       - VITE_API_HOST=http://192.168.151.158:28001/api
+      - VITE_IS_JETSON=false
+      - VITE_QA_DEV_MODE=true
       - VITE_LOAD_DATA_INTERVAL=500
-      - VITE_TYPING_DURATION=500
       - VITE_FRESH_INTERVAL=3000
+      - VITE_TYPING_DURATION=500
     command: ["/bin/sh", "-c", "npm config set registry https://registry.npmmirror.com && npm install && npm run dev -- --host 0.0.0.0"]
     stdin_open: true
     tty: true
     restart: unless-stopped
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx
+    restart: unless-stopped
+    network_mode: host   # 方便局域网内任何设备直接访问;不需要的话可以改成 ports
+    volumes:
+      - ./MediaMTX/mediamtx.yml:/mediamtx.yml
+      - ./MediaMTX/hls:/hls      # HLS 切片输出目录(可选,留着方便调试)
+      - ./MediaMTX/recordings:/recordings  # 录像目录(可选)
 
   
 # ffmpeg -rtsp_transport tcp -i "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101" -c copy -f flv rtmp://localhost:1935/live/livestream

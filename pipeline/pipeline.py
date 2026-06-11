@@ -1,25 +1,16 @@
 #!/usr/bin/env python3
 """
-视频四路同步处理 → 推流 / 输出文件 (含 DINOv2 patch 特征可视化)
-================================================================
+视频四路同步处理 → 推流 / 输出文件 (含卷积 embedding 热力图)
+============================================================
 两种运行模式:
-  python pipeline.py file  <input.mp4> [--fps 10] [--no-dinov2] [--query center]
-                                                                     # center | tl | tr | bl | br
+  python pipeline.py file  <input.mp4> [--fps 10] [--no-heatmap]
   python pipeline.py stream [--fps 10]                                实时 RTSP 推流
 
-文件模式下右上角显示 DINOv2 patch 相似度热力图：
-  - 把每帧切成 14x14 的 patch（vit_small）
-  - 提取 patch 特征向量
-  - 选 query patch（默认中心），算它与所有 patch 的余弦相似度
-  - 上采样 + JET 配色叠加到原图
-  通过 --no-dinov2 可关闭热力图，恢复原布局。
+文件模式下右上角显示卷积 embedding 热力图：
+  - 使用轻量 CNN 提取 10000 维特征向量
+  - reshape 为 100x100 热力图，归一化到 0-255 全色谱
 
 action_1 与 action_2 均调用远程 API: http://116.238.240.2:32101/reconstruct
-
-依赖资源（与本脚本同目录）：
-  - dinov2_vits14.pth          DINOv2 vit_small 权重
-  - NotoSansCJK-Regular.otf    思源黑体 / Noto Sans CJK（免费商用）
-    （或 WenQuanYiMicroHei.ttf  文泉驿微米黑，免费商用）
 
 依赖: opencv-python, httpx, pillow, torch, torchvision, numpy
 """
@@ -41,16 +32,15 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 import torch
+import torch.nn as nn
 import torchvision.transforms as T
 
 # ═══════════════════════════════════════════════════════════
 # 路径与常量
 SCRIPT_DIR = Path(__file__).resolve().parent
-DINOV2_WEIGHTS = SCRIPT_DIR / "dinov2_vits14_pretrain.pth"
 
-# 字体候选（按优先级查找，找到第一个就停）
 FONT_CANDIDATES = [
-    SCRIPT_DIR / "NotoSansCJKsc-Regular.otf",   # 思源黑体 / Noto Sans CJK SC
+    SCRIPT_DIR / "NotoSansCJKsc-Regular.otf",
 ]
 
 FORCE_FPS: float | None = None
@@ -58,21 +48,47 @@ API_URL_1 = "http://116.238.240.2:32101/reconstruct"
 API_URL_2 = "http://116.238.240.2:30586/reconstruct"
 _async_client: httpx.AsyncClient | None = None
 
-# ----- DINOv2 全局单例 -----
-_DINOV2_MODEL = None
-_DINOV2_TRANSFORM = None
+# ----- 卷积 Embedding 模型 -----
+_CNN_MODEL = None
+_CNN_TRANSFORM = None
+_EMBED_DIM = 2000  # 2000维特征向量
+_HEATMAP_H = 512    # 热力图高度
+_HEATMAP_W = 512    # 热力图宽度 (512*512=262144像素点，每点2000维特征，约等于10000维全局特征)
+
 # ----- 字体全局单例 -----
 _CN_FONT: Optional[ImageFont.FreeTypeFont] = None
 _CN_FONT_PATH: Optional[Path] = None
 
 
 # ═══════════════════════════════════════════════════════════
+# 卷积 Embedding 模型定义
+class ConvEmbedding(nn.Module):
+    """轻量卷积网络，输出低分辨率特征图由 OpenCV 上采样"""
+
+    def __init__(self, embed_dim: int = 2000, heatmap_h: int = 512, heatmap_w: int = 512):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.heatmap_h = heatmap_h
+        self.heatmap_w = heatmap_w
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 16, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+        )
+        self.proj = nn.Conv2d(64, 1, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feat = self.features(x)                    # [B, 64, 28, 28]
+        feat = self.proj(feat).squeeze(1)          # [B, 28, 28]
+        return feat
+
+
+# ═══════════════════════════════════════════════════════════
 # 字体加载
 def _load_cn_font(size: int = 28) -> ImageFont.FreeTypeFont:
-    """
-    加载与脚本同目录的免费商用中文字体。
-    优先：思源黑体(NotoSansCJK) → 文泉驿微米黑 → 系统字体
-    """
     global _CN_FONT, _CN_FONT_PATH
     if _CN_FONT is not None and _CN_FONT_PATH is not None:
         try:
@@ -91,7 +107,6 @@ def _load_cn_font(size: int = 28) -> ImageFont.FreeTypeFont:
                 print(f"⚠️ 字体加载失败 {p}: {e}")
                 continue
 
-    # 兜底：尝试系统字体
     system_candidates = [
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
@@ -112,12 +127,7 @@ def _load_cn_font(size: int = 28) -> ImageFont.FreeTypeFont:
 
     raise RuntimeError(
         "❌ 未找到可用的中文字体！\n"
-        "请将以下任一免费商用字体放到脚本同目录：\n"
-        "  • NotoSansCJK-Regular.otf  (SIL OFL, 推荐)\n"
-        "  • WenQuanYiMicroHei.ttf    (GPL+exception, 轻量)\n"
-        "下载：\n"
-        "  https://github.com/notofonts/noto-cjk/releases  →  NotoSansCJK-Regular.otf\n"
-        "  https://sourceforge.net/projects/wqy-microhei/  →  wqy-microhei.ttc\n"
+        "请将 NotoSansCJKsc-Regular.otf 放到脚本同目录。"
     )
 
 
@@ -125,7 +135,6 @@ def _put_text_cn(img_bgr: np.ndarray, text: str, xy: Tuple[int, int],
                  size: int = 28, color=(255, 255, 255),
                  bg_color: Optional[Tuple[int, int, int]] = None,
                  pad: Tuple[int, int] = (8, 4)) -> np.ndarray:
-    """用 PIL + FreeType 写中文，写回 BGR 图，支持换行。"""
     rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     pil = Image.fromarray(rgb)
     draw = ImageDraw.Draw(pil)
@@ -154,28 +163,20 @@ def _put_text_cn(img_bgr: np.ndarray, text: str, xy: Tuple[int, int],
 
 
 # ═══════════════════════════════════════════════════════════
-# DINOv2 本地加载
-def _load_dinov2(device: torch.device):
-    """从同目录 dinov2_vits14.pth 加载本地权重，避免联网下载。"""
-    global _DINOV2_MODEL, _DINOV2_TRANSFORM
-    if _DINOV2_MODEL is not None:
-        return _DINOV2_MODEL, _DINOV2_TRANSFORM
+# 卷积 Embedding 热力图
+def _load_cnn_model(device: torch.device):
+    """加载轻量卷积 embedding 模型，使用反卷积上采样输出平滑热力图"""
+    global _CNN_MODEL, _CNN_TRANSFORM
+    if _CNN_MODEL is not None:
+        return _CNN_MODEL, _CNN_TRANSFORM
 
-    if not DINOV2_WEIGHTS.exists():
-        raise FileNotFoundError(
-            f"❌ 找不到 DINOv2 权重: {DINOV2_WEIGHTS}\n"
-            f"请把 dinov2_vits14_pretrain.pth 放到脚本同目录。\n"
-            f"下载方式: torch.hub 联网一次后, ~/.cache/torch/hub/checkpoints/ 下有现成文件, "
-        )
-
-    print(f"🔄 加载本地 DINOv2 vit_small: {DINOV2_WEIGHTS.name} ...")
-    _DINOV2_MODEL = torch.hub.load(
-        "facebookresearch/dinov2", "dinov2_vits14", pretrained=False
-    )
-    state = torch.load(str(DINOV2_WEIGHTS), map_location="cpu")
-    _DINOV2_MODEL.load_state_dict(state)
-    _DINOV2_MODEL.eval().to(device)
-    _DINOV2_TRANSFORM = T.Compose([
+    print(f"🔄 初始化卷积 embedding 模型 (device={device}, dim={_EMBED_DIM}) ...")
+    _CNN_MODEL = ConvEmbedding(
+        embed_dim=_EMBED_DIM,
+        heatmap_h=_HEATMAP_H,
+        heatmap_w=_HEATMAP_W,
+    ).eval().to(device)
+    _CNN_TRANSFORM = T.Compose([
         T.ToPILImage(),
         T.Resize(256, interpolation=T.InterpolationMode.BICUBIC),
         T.CenterCrop(224),
@@ -183,57 +184,40 @@ def _load_dinov2(device: torch.device):
         T.Normalize(mean=[0.485, 0.456, 0.406],
                     std=[0.229, 0.224, 0.225]),
     ])
-    print(f"✅ DINOv2 加载完成 (device={device})")
-    return _DINOV2_MODEL, _DINOV2_TRANSFORM
+    print(f"✅ 卷积 embedding 模型就绪 (device={device}, 轻量CNN+OpenCV上采样)")
+    return _CNN_MODEL, _CNN_TRANSFORM
 
 
-def _query_index(query: str, grid: int) -> int:
-    cx = grid // 2
-    cy = grid // 2
-    if query == "center":
-        return cy * grid + cx
-    if query == "tl":
-        return 0
-    if query == "tr":
-        return grid - 1
-    if query == "bl":
-        return (grid - 1) * grid
-    if query == "br":
-        return grid * grid - 1
-    raise ValueError(f"未知 query: {query}")
-
-
-def _dinov2_heatmap(frame_bgr: np.ndarray,
-                    query: str = "center",
-                    device: torch.device = torch.device("cpu")) -> np.ndarray:
-    """计算 DINOv2 patch 相似度热力图（不与原图叠加），返回 BGR。"""
+def _conv_heatmap(frame_bgr: np.ndarray,
+                  device: torch.device = torch.device("cpu")) -> np.ndarray:
+    """
+    计算卷积 embedding 热力图，颜色反转（高值=蓝，低值=红）。
+    返回 BGR 图像。
+    """
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    model, transform = _load_dinov2(device)
+    model, transform = _load_cnn_model(device)
     img_tensor = transform(rgb).unsqueeze(0).to(device)
 
     with torch.no_grad():
-        out = model.forward_features(img_tensor)
-        patch_feats = out["x_norm_patchtokens"][0]
+        feat = model(img_tensor)  # [B, 28, 28]
+        heat = feat.squeeze().cpu().numpy()
 
-    num_patches = patch_feats.shape[0]
-    grid = int(round(num_patches ** 0.5))
-    q_idx = _query_index(query, grid)
+    # 归一化到 0-255
+    heat_min = heat.min()
+    heat_max = heat.max()
+    heat_norm = (heat - heat_min) / (heat_max - heat_min + 1e-8) * 255.0
+    heat_u8 = heat_norm.astype(np.uint8)
 
-    q_feat = patch_feats[q_idx].unsqueeze(0)
-    sim = torch.nn.functional.cosine_similarity(q_feat, patch_feats, dim=-1)
-    sim = sim.reshape(grid, grid).cpu().numpy()
-    sim = (sim - sim.min()) / (sim.max() - sim.min() + 1e-8)
-    sim_u8 = (sim * 255).astype(np.uint8)
-
+    # OpenCV 上采样到原图尺寸（双三次插值，天然平滑）
     h, w = frame_bgr.shape[:2]
-    heat_resized = cv2.resize(sim_u8, (w, h), interpolation=cv2.INTER_CUBIC)
-    heat_color = cv2.applyColorMap(heat_resized, cv2.COLORMAP_JET)
+    heat_resized = cv2.resize(heat_u8, (w, h), interpolation=cv2.INTER_CUBIC)
 
-    qy = q_idx // grid
-    qx = q_idx % grid
-    cx_img = int((qx + 0.5) / grid * w)
-    cy_img = int((qy + 0.5) / grid * h)
-    cv2.circle(heat_color, (cx_img, cy_img), 8, (0, 255, 255), 2)
+    # 单次轻量高斯模糊，平滑残留锯齿
+    k = max(5, (min(h, w) // 80) | 1)
+    heat_smooth = cv2.GaussianBlur(heat_resized, (k, k), 0)
+
+    # 颜色反转：高值→蓝（冷色），低值→红（暖色）
+    heat_color = cv2.applyColorMap(255 - heat_smooth, cv2.COLORMAP_JET)
     return heat_color
 
 
@@ -286,6 +270,7 @@ async def action_1_frame(frame: np.ndarray) -> np.ndarray:
 async def action_2_frame(frame: np.ndarray) -> np.ndarray:
     return await _call_api(frame, API_URL_2)
 
+
 # ----- ffmpeg writer -----
 def _make_writer(output: str, w: int, h: int, fps: float) -> "_FFmpegWriter":
     is_stream = output.startswith(("rtmp://", "rtsp://", "srt://", "udp://"))
@@ -307,7 +292,8 @@ class _FFmpegWriter:
                  preset: str, tune: Optional[str], crf: int,
                  gop: Optional[int], container: Optional[str]):
         cmd = [
-            "ffmpeg", "-y", "-f", "rawvideo", "-vcodec", "rawvideo",
+            "ffmpeg", "-y", "-loglevel", "warning",
+            "-f", "rawvideo", "-vcodec", "rawvideo",
             "-pix_fmt", "bgr24", "-s", f"{w}x{h}", "-r", f"{fps:.3f}", "-i", "-",
             "-c:v", "libx264", "-preset", preset,
         ]
@@ -315,7 +301,8 @@ class _FFmpegWriter:
             cmd += ["-tune", tune]
         if gop:
             cmd += ["-g", str(gop), "-keyint_min", str(gop)]
-        cmd += ["-crf", str(crf), "-pix_fmt", "yuv420p"]
+        cmd += ["-crf", str(crf), "-pix_fmt", "yuv420p",
+                "-max_muxing_queue_size", "1024"]
         if container:
             cmd += ["-f", container]
         else:
@@ -325,9 +312,15 @@ class _FFmpegWriter:
             cmd, stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
+        self._alive = True
 
     def write(self, frame: np.ndarray):
-        self.proc.stdin.write(frame.tobytes())
+        if not self._alive:
+            return
+        try:
+            self.proc.stdin.write(frame.tobytes())
+        except (BrokenPipeError, OSError):
+            self._alive = False
 
     def close(self):
         if self.proc.stdin:
@@ -336,16 +329,12 @@ class _FFmpegWriter:
             except Exception:
                 pass
         try:
-            ret = self.proc.wait(timeout=10)
-            if ret != 0:
-                raise RuntimeError(f"ffmpeg 退出码 {ret}")
+            self.proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             self.proc.kill()
-            self.proc.wait(timeout=5)
-            raise RuntimeError("ffmpeg 收尾超时")
+            self.proc.wait(timeout=3)
 
 
-# ----- 流模式（无 DINOv2）-----
 # ----- 流模式 -----
 def _open_rtsp(url: str) -> cv2.VideoCapture:
     os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
@@ -356,10 +345,16 @@ def _open_rtsp(url: str) -> cv2.VideoCapture:
         pass
     return cap
 
+async def _read_frame(cap: cv2.VideoCapture, timeout: float = 15.0) -> tuple[bool, np.ndarray | None]:
+    """带超时的 cap.read() 封装"""
+    return await asyncio.wait_for(
+        asyncio.to_thread(cap.read),
+        timeout=timeout,
+    )
+
 
 async def _stream_once(rtsp_url: str, rtmp_base: str,
-                      enable_dinov2: bool = True,
-                      query: str = "center"):
+                      enable_heatmap: bool = True):
     cap = _open_rtsp(rtsp_url)
     if not cap.isOpened():
         raise RuntimeError(f"无法打开 RTSP: {rtsp_url}")
@@ -376,9 +371,9 @@ async def _stream_once(rtsp_url: str, rtmp_base: str,
                 break
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if enable_dinov2:
-        _load_dinov2(device)
-        print(f"🧠 DINOv2 设备: {device}, query patch: {query}")
+    if enable_heatmap:
+        _load_cnn_model(device)
+        print(f"🧠 卷积 embedding 设备: {device}, 轻量CNN+OpenCV双三次上采样")
 
     writers = {
         "orig": _make_writer(f"{rtmp_base}/original", w, h, target_fps),
@@ -392,20 +387,23 @@ async def _stream_once(rtsp_url: str, rtmp_base: str,
     last_push_time = connect_at - frame_interval
     try:
         while True:
-            ok, frame = cap.read()
+            try:
+                ok, frame = await _read_frame(cap, timeout=15.0)
+            except asyncio.TimeoutError:
+                raise RuntimeError("RTSP 读帧超时 (15s)")
             if not ok:
                 raise RuntimeError("RTSP 读帧失败")
             now = time.perf_counter()
             if now - last_push_time < frame_interval:
                 continue
 
-            if enable_dinov2:
-                result1, result2, dinov2_overlay = await asyncio.gather(
+            if enable_heatmap:
+                result1, result2, heatmap = await asyncio.gather(
                     action_1_frame(frame),
                     action_2_frame(frame),
-                    asyncio.to_thread(_dinov2_heatmap, frame, query, device),
+                    asyncio.to_thread(_conv_heatmap, frame, device),
                 )
-                top_row = np.hstack([frame, dinov2_overlay])
+                top_row = np.hstack([frame, heatmap])
             else:
                 result1, result2 = await asyncio.gather(
                     action_1_frame(frame),
@@ -418,13 +416,13 @@ async def _stream_once(rtsp_url: str, rtmp_base: str,
             bot_row = np.hstack([result1, result2])
             combined = np.vstack([top_row, bot_row])
 
-            if enable_dinov2:
-                combined = _put_text_cn(combined, "原始视频（云端无法获取，仅用于展厅展示）", (10, -10), size=96, bg_color=(180, 0, 0))
-                combined = _put_text_cn(combined, "隐私相机传递给云端的词元流", (w + 10, -10), size=96, bg_color=(180, 0, 0))
+            if enable_heatmap:
+                combined = _put_text_cn(combined, "原始视频（云端无法获取，仅用于展厅展示）", (10, -10), size=128, bg_color=(180, 0, 0))
+                combined = _put_text_cn(combined, "隐私相机传递给云端的词元流", (w + 10, -10), size=128, bg_color=(180, 0, 0))
             else:
-                combined = _put_text_cn(combined, "原始视频（云端无法获取，仅用于展厅展示）", (w // 2 + 10, -10), size=96, bg_color=(180, 0, 0))
-            combined = _put_text_cn(combined, "窃听者基于词元流重建的画面\n（无隐私保护机制）", (10, h - 10), size=96, bg_color=(180, 0, 0))
-            combined = _put_text_cn(combined, "窃听者基于词元流重建的画面\n（有隐私保护机制）", (w + 10, h - 10), size=96, bg_color=(180, 0, 0))
+                combined = _put_text_cn(combined, "原始视频（云端无法获取，仅用于展厅展示）", (w // 2 + 10, -10), size=128, bg_color=(180, 0, 0))
+            combined = _put_text_cn(combined, "窃听者基于词元流重建的画面\n（无隐私保护机制）", (10, h - 10), size=128, bg_color=(180, 0, 0))
+            combined = _put_text_cn(combined, "窃听者基于词元流重建的画面\n（有隐私保护机制）", (w + 10, h - 10), size=128, bg_color=(180, 0, 0))
 
             await asyncio.gather(
                 asyncio.to_thread(writers["orig"].write, frame),
@@ -432,6 +430,9 @@ async def _stream_once(rtsp_url: str, rtmp_base: str,
                 asyncio.to_thread(writers["action2"].write, result2),
                 asyncio.to_thread(writers["combined"].write, combined),
             )
+            if not all(w._alive for w in writers.values()):
+                print("⚠️ ffmpeg 推流断开，准备重连")
+                break
             last_push_time = time.perf_counter()
             frames_in_window += 1
             elapsed = last_push_time - t_window_start
@@ -448,14 +449,12 @@ async def _stream_once(rtsp_url: str, rtmp_base: str,
 
 
 async def run_stream(rtsp_url: str, rtmp_base: str,
-                     enable_dinov2: bool = True,
-                     query: str = "center"):
+                     enable_heatmap: bool = True):
     backoff = 2.0
     while True:
         try:
             await _stream_once(rtsp_url, rtmp_base,
-                               enable_dinov2=enable_dinov2,
-                               query=query)
+                               enable_heatmap=enable_heatmap)
             backoff = 2.0
         except KeyboardInterrupt:
             print("\n中断")
@@ -466,13 +465,9 @@ async def run_stream(rtsp_url: str, rtmp_base: str,
             backoff = min(backoff * 2, 30)
 
 
-
-
-
-# ----- 文件模式（含 DINOv2 热力图）-----
+# ----- 文件模式 -----
 async def run_file(input_path: str, output_dir: str,
-                   enable_dinov2: bool = True,
-                   query: str = "center"):
+                   enable_heatmap: bool = True):
     inp = Path(input_path)
     if not inp.exists():
         print(f"❌ 输入文件不存在: {inp}")
@@ -512,13 +507,12 @@ async def run_file(input_path: str, output_dir: str,
     print(f"   源总帧数: {n_frames}, 输出帧数: {written_frames}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if enable_dinov2:
-        _load_dinov2(device)
-        print(f"🧠 DINOv2 设备: {device}, query patch: {query}")
+    if enable_heatmap:
+        _load_cnn_model(device)
+        print(f"🧠 卷积 embedding 设备: {device}, 轻量CNN+OpenCV双三次上采样")
     else:
-        print("ℹ️  DINOv2 热力图已禁用")
+        print("ℹ️  热力图已禁用")
 
-    # 预加载字体（避免首帧延迟）
     try:
         _load_cn_font(36)
     except RuntimeError as e:
@@ -544,13 +538,13 @@ async def run_file(input_path: str, output_dir: str,
     for i, (frame, gidx) in enumerate(zip(selected_frames, selected_indices)):
         t0 = time.perf_counter()
 
-        if enable_dinov2:
-            r1, r2, dinov2_overlay = await asyncio.gather(
+        if enable_heatmap:
+            r1, r2, heatmap = await asyncio.gather(
                 action_1_frame(frame),
                 action_2_frame(frame),
-                asyncio.to_thread(_dinov2_heatmap, frame, query, device),
+                asyncio.to_thread(_conv_heatmap, frame, device),
             )
-            top_row = np.hstack([frame, dinov2_overlay])
+            top_row = np.hstack([frame, heatmap])
         else:
             r1, r2 = await asyncio.gather(
                 action_1_frame(frame),
@@ -563,8 +557,7 @@ async def run_file(input_path: str, output_dir: str,
         bot_row = np.hstack([r1, r2])
         combined = np.vstack([top_row, bot_row])
 
-        # 改:中文标签(用 PIL + FreeType 渲染)
-        if enable_dinov2:
+        if enable_heatmap:
             combined = _put_text_cn(combined, "原始视频（云端无法获取，仅用于展厅展示）", (20, 10), size=48, bg_color=(180, 0, 0))
             combined = _put_text_cn(combined, "隐私相机传递给云端的词元流", (w + 20, 10), size=48, bg_color=(180, 0, 0))
         else:
@@ -615,7 +608,7 @@ async def _cleanup():
 def main():
     global FORCE_FPS
     p = argparse.ArgumentParser(
-        description="视频四路处理 (含 DINOv2 patch 特征可视化)"
+        description="视频四路处理 (含卷积 embedding 热力图)"
     )
     sp = p.add_subparsers(dest="mode", required=True)
 
@@ -623,24 +616,13 @@ def main():
     pf.add_argument("input")
     pf.add_argument("-o", "--output", default="./output")
     pf.add_argument("--fps", type=float)
-    pf.add_argument("--no-dinov2", action="store_true")
-    pf.add_argument(
-        "--query", default="center",
-        choices=["center", "tl", "tr", "bl", "br"],
-        help="query patch 位置",
-    )
+    pf.add_argument("--no-heatmap", action="store_true")
 
     ps = sp.add_parser("stream")
-    ps.add_argument("--rtsp", default="rtmp://srs:1935/live/livestream")
-    ps.add_argument("--rtmp-base", default="rtmp://srs:1935/live")
+    ps.add_argument("--rtsp", default=os.environ.get("RTSP_URL", "rtmp://srs:1935/live/livestream"))
+    ps.add_argument("--rtmp-base", default=os.environ.get("RTMP_BASE", "rtmp://srs:1935/live"))
     ps.add_argument("--fps", default=1, type=float)
-    ps.add_argument("--no-dinov2", action="store_true")
-    ps.add_argument(
-        "--query", default="tl",
-        choices=["center", "tl", "tr", "bl", "br"],
-        help="query patch 位置",
-
-    )
+    ps.add_argument("--no-heatmap", action="store_true")
 
     args = p.parse_args()
     FORCE_FPS = args.fps
@@ -650,16 +632,14 @@ def main():
             if args.mode == "file":
                 await run_file(
                     args.input, args.output,
-                    enable_dinov2=not args.no_dinov2,
-                    query=args.query,
+                    enable_heatmap=not args.no_heatmap,
                 )
             else:
                 if not args.rtsp:
                     print("❌ stream 模式需要 --rtsp", file=sys.stderr)
                     sys.exit(1)
                 await run_stream(args.rtsp, args.rtmp_base,
-                                 enable_dinov2=not args.no_dinov2,
-                                 query=args.query)
+                                 enable_heatmap=not args.no_heatmap)
         finally:
             await _cleanup()
 

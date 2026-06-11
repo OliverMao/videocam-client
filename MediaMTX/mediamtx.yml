@@ -1,0 +1,38 @@
+# ============================================================
+# MediaMTX v1.x 配置 - 把海康 RTSP 拉过来,转成 HLS / WebRTC
+# 注意:v1.x 之后 hls/webrtc 不再是 path 子选项,而是全局开关
+# ============================================================
+logLevel: info
+logDestinations: [stdout]
+
+# ---- 全局:把 HLS / WebRTC / RTMP / API 端口开起来 -------------------------
+hlsAddress: :8888
+webrtcAddress: :8889
+webrtcEncryption: no
+webrtcAdditionalHosts: [127.0.0.1, 192.168.151.158]  # 改成 MediaMTX 所在机器的内网IP
+rtmpAddress: :1935              # 接收 pipeline 的 RTMP 推流
+rtspAddress: :8554
+apiAddress: :9997
+metricsAddress: :9998
+
+# ---- 路径(每一路摄像头配一个) -------------------------------------------
+paths:
+  # 主码流(高清,适合查看)
+  cam_main:
+    source: rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101
+    sourceProtocol: tcp          # 海康推荐 tcp,避免 UDP 丢包花屏
+    sourceAnyPortEnable: yes     # 拉流用任意端口,有些路由器/防火墙会拦截固定端口
+    # ↓ 录像(可选) ↓
+    # record: yes                # 改成 yes 开启 mp4 录像
+    # recordPath: /recordings/cam_main_%Y-%m-%d_%H-%M-%S.mp4
+    # recordFormat: mp4
+    # recordPartDuration: 1h
+    # recordSegmentDuration: 1h
+
+  # 副码流已删除(海康那边 500,改用主码流即可)
+
+  # ---- pipeline 推流路径(无 source,接受 RTMP 推送) --------------------------
+  live/original:
+  live/action1:
+  live/action2:
+  live/combined:
