@@ -24,13 +24,12 @@ MODEL_NAME="Qwen3.6-35B-A3B"
 DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", MODEL_NAME)
 
 # 推理触发间隔（每 1 秒触发一次）
-DEFAULT_INTERVAL_SEC = float(os.environ.get("INTERVAL_SEC", "1.0"))
+DEFAULT_INTERVAL_SEC = float(os.environ.get("INTERVAL_SEC", "0.5"))
 
 # 抽帧相关：6 秒窗口 × 2 fps = 12 帧（实际取14帧）
-WINDOW_SEC = float(os.environ.get("WINDOW_SEC", "6.0"))     # 时间窗口长度
 SAMPLE_FPS = float(os.environ.get("SAMPLE_FPS", "2.0"))     # 每秒抽几帧
-REQUIRED_FRAMES =     8                                  # 缓冲区大小：存储14帧
-INFERENCE_FRAMES = 4                                        # 每次推理发送前4帧
+REQUIRED_FRAMES = int(os.environ.get("REQUIRED_FRAMES", "8"))    # 缓冲区大小：存储14帧
+INFERENCE_FRAMES = int(os.environ.get("INFERENCE_FRAMES", "4"))     # 每次推理发送前4帧
 
 MAX_WIDTH = 512
 MAX_FAIL_COUNT = 2
@@ -148,7 +147,6 @@ class RTSPInferenceClient:
         self._lock = threading.Lock()
         self._is_healthy = False
 
-        # 抽帧 buffer：攒最近 WINDOW_SEC 秒、按 SAMPLE_FPS 采样的画面
         self._valid_frames_buffer: List[Any] = []
 
         self._llm_call_times: List[float] = []
@@ -295,7 +293,6 @@ class RTSPInferenceClient:
                 "media_processing_time_ms": media_processing_time_ms,
                 "verification_media_processing_time_ms": verification_media_processing_time_ms,
                 "frame_count": len(frames),
-                "window_sec": WINDOW_SEC,
                 "sample_fps": SAMPLE_FPS,
             }
 
@@ -312,7 +309,6 @@ class RTSPInferenceClient:
                 "media_processing_time_ms": 0.0,
                 "verification_media_processing_time_ms": 0.0,
                 "frame_count": 0,
-                "window_sec": WINDOW_SEC,
                 "sample_fps": SAMPLE_FPS,
             }
             with self._lock:

@@ -1,20 +1,6 @@
 version: '3.8'
 
 services:
-  # srs:
-  #   image: registry.cn-hangzhou.aliyuncs.com/ossrs/srs:5
-  #   container_name: srs
-  #   ports:
-  #     - "1935:1935"
-  #     - "1985:1985"
-  #     - "8081:8080"
-  #     - "18000:8000/udp"
-  #   environment:
-  #     - CANDIDATE=192.168.151.158
-  #   stdin_open: true
-  #   tty: true
-  #   restart: unless-stopped
-
   app:
     build: ./server
     container_name: video-api
@@ -22,56 +8,15 @@ services:
       - "28001:28001"
     environment:
       - RTSP_URL=rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101
-      - OPENAI_API_BASE=http://116.238.240.2:32726/v1                                                              # 4090调用的vllm地址
-      - MODEL_NAME=/ddn/gemini/gemini-sharedata/space/wqmu4k88unnm/guarded_files/songhuan/Models/Qwen3.6-35B-A3B   # 模型名称
-      - INTERVAL_SEC=1.0                                                                                # 采集间隔秒数    
-      - REQUIRED_FRAMES=4                                                                              # 固定采集4帧有效的“有人”帧                      
+      - OPENAI_API_BASE=http://116.238.240.2:30264/v1                                                              # 负载均衡地址
+      - MODEL_NAME=Qwen3.6-35B-A3B   # 模型名称
+      - INTERVAL_SEC=1                                                                                # 调用API间隔秒数    
+      - SAMPLE_FPS=4                                                                                 # 每秒抽几帧
+      - REQUIRED_FRAMES=8                                       # 缓冲区大小：存储14帧
+      - INFERENCE_FRAMES=4                                       # 每次推理发送前6帧
     volumes:
       - ./server/:/app
-    # depends_on:
-    #   - srs
     restart: unless-stopped
-
-  # ffmpeg-stream:
-  #   image: linuxserver/ffmpeg
-  #   container_name: ffmpeg-stream
-  #   # 使用数组格式，避免 YAML 多行字符串解析问题
-  #   command:
-  #     - "-rtsp_transport"
-  #     - "tcp"
-  #     - "-timeout"
-  #     - "5000000"
-  #     - "-i"
-  #     - "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"
-  #     - "-vf"
-  #     - "crop=2000:ih:0:0"
-  #     - "-c:v"
-  #     - "libx264"
-  #     - "-preset"
-  #     - "fast"
-  #     - "-tune"
-  #     - "zerolatency"
-  #     - "-b:v"
-  #     - "4M"
-  #     - "-c:a"
-  #     - "aac"
-  #     - "-b:a"
-  #     - "128k"
-  #     - "-f"
-  #     - "flv"
-  #     - "-muxdelay"
-  #     - "1"
-  #     - "-muxpreload"
-  #     - "1"
-  #     - "rtmp://srs:1935/live/livestream"
-  #   depends_on:
-  #     - srs
-  #   restart: unless-stopped
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "50m"
-  #       max-file: "3"
 
   pipeline:
     build: ./pipeline
@@ -135,8 +80,3 @@ services:
       - ./MediaMTX/hls:/hls      # HLS 切片输出目录(可选,留着方便调试)
       - ./MediaMTX/recordings:/recordings  # 录像目录(可选)
 
-  
-# ffmpeg -rtsp_transport tcp -i "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101" -c copy -f flv rtmp://localhost:1935/live/livestream
-
-
-# ffmpeg -rtsp_transport tcp  -i "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"  -c copy  -f flv   -muxdelay 3   -muxpreload 3  rtmp://localhost:1935/live/livestream

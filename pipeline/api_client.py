@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image
 
 # ----- API 配置 -----
-API_URL_1 = "http://116.238.240.2:30852/reconstruct"
+API_URL_1 = "http://116.238.240.2:30852/process"
 API_URL_2 = "http://116.238.240.2:31344/reconstruct"
 _async_client: httpx.AsyncClient | None = None
 
