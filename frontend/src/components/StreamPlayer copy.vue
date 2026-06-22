@@ -9,6 +9,34 @@ const props = defineProps({
   cropRight: {
     type: Boolean,
     default: false
+  },
+  privacyMode: {
+    type: Boolean,
+    default: false
+  },
+  // ===== 隐私模式（2×2 网格）配置 =====
+  // 输入：privacyGridCols × privacyGridRows 个 privacyCellWidth × privacyCellHeight 子视频拼接
+  // 每个子视频裁剪：保留左侧 privacyCropWidth × privacyCellHeight
+  // 输出：privacyGridCols × privacyGridRows 个 privacyCropWidth × privacyCellHeight 重新拼接
+  privacyGridCols: {
+    type: Number,
+    default: 2
+  },
+  privacyGridRows: {
+    type: Number,
+    default: 2
+  },
+  privacyCellWidth: {
+    type: Number,
+    default: 2560
+  },
+  privacyCellHeight: {
+    type: Number,
+    default: 1440
+  },
+  privacyCropWidth: {
+    type: Number,
+    default: 2000
   }
 })
 
@@ -18,8 +46,8 @@ const videoRef = ref(null)
 const canvasRef = ref(null)
 const status = ref('idle')
 
-// ===== 裁剪配置 =====
-// 源：2560×1440  →  输出：2000×1440（保留左侧 2000px）
+// ===== 单流裁剪配置 =====
+// 源：2560×1440  →  输出：2000×1440（保留左侧）
 const SRC_W = 2560
 const SRC_H = 1440
 const DST_W = 2000
@@ -58,11 +86,14 @@ function clearRefreshTimer() {
   isRefreshing = false
 }
 
+function isCanvasMode() {
+  return props.cropRight || props.privacyMode
+}
+
 // ===== canvas 渲染循环 =====
-// 每帧把 video 当前画面左侧 78.125% 的区域，绘制到 2000×1440 的 canvas 上
 function renderTick() {
   rafId = requestAnimationFrame(renderTick)
-  if (!props.cropRight) return
+  if (!isCanvasMode()) return
 
   const video = videoRef.value
   const canvas = canvasRef.value
@@ -72,19 +103,65 @@ function renderTick() {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  // 按比例从源视频里取左侧 KEEP 比例的宽度
+  if (props.privacyMode) {
+    renderPrivacyGrid(ctx, video, canvas)
+  } else {
+    renderCropRight(ctx, video, canvas)
+  }
+}
+
+// 单流：从视频帧左侧裁出 KEEP 比例
+function renderCropRight(ctx, video, canvas) {
   const sw = Math.round(video.videoWidth * KEEP)
   const sh = video.videoHeight
 
   if (canvas.width !== DST_W) canvas.width = DST_W
   if (canvas.height !== DST_H) canvas.height = DST_H
-
   ctx.clearRect(0, 0, DST_W, DST_H)
   ctx.drawImage(
     video,
     0, 0, sw, sh,        // 源矩形：从左上角开始，宽 sw 高 sh（左侧裁剪）
     0, 0, DST_W, DST_H   // 目标矩形：铺满整个 canvas
   )
+}
+
+// 隐私模式：把 2×2 网格的每个子视频都做同样的左侧裁剪，再拼回 2×2
+function renderPrivacyGrid(ctx, video, canvas) {
+  const cols = props.privacyGridCols
+  const rows = props.privacyGridRows
+  const cellW = props.privacyCellWidth
+  const cellH = props.privacyCellHeight
+  const cropW = props.privacyCropWidth
+
+  // 输入总尺寸 & 输出总尺寸
+  const srcTotalW = cols * cellW
+  const srcTotalH = rows * cellH
+  const outTotalW = cols * cropW
+  const outTotalH = rows * cellH
+
+  // 按比例换算（处理实际分辨率与预期不符的情况）
+  const scaleX = video.videoWidth / srcTotalW
+  const scaleY = video.videoHeight / srcTotalH
+  const cellSrcW = cellW * scaleX
+  const cellSrcH = cellH * scaleY
+  const cropSrcW = cropW * scaleX
+
+  if (canvas.width !== outTotalW) canvas.width = outTotalW
+  if (canvas.height !== outTotalH) canvas.height = outTotalH
+  ctx.clearRect(0, 0, outTotalW, outTotalH)
+
+  // 遍历网格，每个子视频做一次"取左侧、贴到对应位置"
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      ctx.drawImage(
+        video,
+        col * cellSrcW, row * cellSrcH,        // 源起点（对应子视频的左上角）
+        cropSrcW, cellSrcH,                     // 源矩形：宽 cropSrcW（即子视频左侧）
+        col * cropW, row * cellH,               // 目标起点（拼回去对应位置）
+        cropW, cellH                            // 目标矩形
+      )
+    }
+  }
 }
 
 function startRender() {
@@ -114,7 +191,7 @@ async function initPlayer() {
 
     pc.ontrack = (e) => {
       videoRef.value.srcObject = e.streams[0]
-      if (props.cropRight) startRender()
+      if (isCanvasMode()) startRender()
     }
 
     pc.oniceconnectionstatechange = () => {
@@ -187,10 +264,10 @@ watch(
 )
 
 watch(
-  () => props.cropRight,
-  (val) => {
-    console.log('[StreamPlayer] cropRight ->', val)
-    if (val) startRender()
+  [() => props.cropRight, () => props.privacyMode],
+  ([crop, privacy]) => {
+    console.log('[StreamPlayer] mode ->', { cropRight: crop, privacyMode: privacy })
+    if (crop || privacy) startRender()
     else stopRender()
   }
 )
@@ -204,14 +281,14 @@ defineExpose({ status })
     <video
       ref="videoRef"
       class="stream-video"
-      :class="{ 'is-source': cropRight }"
+      :class="{ 'is-source': cropRight || privacyMode }"
       muted
       autoplay
       playsinline
     />
-    <!-- canvas 在 cropRight 时显示，作为实际渲染输出 -->
+    <!-- canvas 在 cropRight 或 privacyMode 时显示，作为实际渲染输出 -->
     <canvas
-      v-show="cropRight"
+      v-show="cropRight || privacyMode"
       ref="canvasRef"
       class="stream-canvas"
     />
@@ -232,7 +309,7 @@ defineExpose({ status })
   object-fit: contain;
   background: #000;
 }
-/* cropRight 模式下：把 video 缩到 1×1 但保留播放，避免部分浏览器暂停隐藏元素 */
+/* canvas 模式下：把 video 缩到 1×1 但保留播放，避免部分浏览器暂停隐藏元素 */
 .stream-video.is-source {
   position: absolute;
   top: 0;
@@ -241,11 +318,13 @@ defineExpose({ status })
   height: 1px;
   opacity: 0;
   pointer-events: none;
+  visibility: visible; /* 不能是 hidden */
 }
 .stream-canvas {
   width: 100%;
   height: 100%;
   display: block;
   background: #000;
+  object-fit: contain;
 }
 </style>

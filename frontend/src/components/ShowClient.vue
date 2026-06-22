@@ -213,14 +213,13 @@ onUnmounted(() => {
               </button>
             </div>
             <StreamPlayer
-              :privacy-mode="'True'" privacy-grid-cols="1" privacy-grid-rows="1" privacy-cell-width="2560"
-              privacy-cell-height="1440" privacy-crop-width="2000" :streamUrl="streamUrl" @error="onStreamError"
+               :streamUrl="streamUrl" @error="onStreamError"
               @connected="onStreamConnected" @disconnected="onStreamDisconnected" />
-            <StreamPlayer
+            <!-- <StreamPlayer
               :style="{ position: 'absolute', width: streamMode === 'combined' ? '100%' : '1px', height: streamMode === 'combined' ? '100%' : '1px' }"
               :privacy-mode="'True'" privacy-grid-cols="2" privacy-grid-rows="2" privacy-cell-width="2560"
               privacy-cell-height="1440" privacy-crop-width="2000" :streamUrl="combinedStreamUrl" @error="onStreamError"
-              @connected="onStreamConnected" @disconnected="onStreamDisconnected" />
+              @connected="onStreamConnected" @disconnected="onStreamDisconnected" /> -->
           </div>
         </div>
       </section>

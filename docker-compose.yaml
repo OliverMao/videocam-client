@@ -23,7 +23,7 @@ services:
     container_name: video-pipeline
     network_mode: host
     privileged: true
-    command: ["uv", "run", "pipeline.py", "stream", "--fps", "0.3"]
+    command: ["uv", "run", "pipeline.py","--fps", "0.3"]
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video

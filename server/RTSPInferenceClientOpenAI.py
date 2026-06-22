@@ -12,9 +12,6 @@ import os
 # ================= 全局模式配置 =================
 USE_VIDEO_MODE = False
 
-# 是否开启两阶段VLM复核
-ENABLE_VLM_VERIFICATION = False
-# ================================================
 DEFAULT_OPENAI_API = "http://116.238.240.2:30630/v1"  # Jetson
 # DEFAULT_OPENAI_API = "http://116.238.240.2:32726/v1"  # 4090
 DEFAULT_OPENAI_API_BASE = os.environ.get("OPENAI_API_BASE", DEFAULT_OPENAI_API)
@@ -44,16 +41,6 @@ DEFAULT_SYSTEM_PROMPT = """
 存在，输出 {"has_person": 1, "violations": [...]}，其中 violations 数组列出所有发现的违规行为（如 ["吸烟"] 或 ["吸烟","打架"]）。如果没有任何违规行为，violations 应为空数组 []。
 严格按照上述格式输出 JSON，不要添加任何多余的文本或解释，不要开启思考模式。
 """
-
-DEFAULT_VERIFICATION_PROMPT = """
-你现在要核验上一轮输出是否与当前画面内容对应。
-
-请只根据当前提供的画面和上一轮输出结果进行判断，不要重复展开无关分析。
-如果上一轮结果与画面一致，输出 {"match": 1, "reason": "简要说明", "correct_result": <上一轮结果>}。
-如果上一轮结果与画面不一致，输出 {"match": 0, "reason": "简要说明", "correct_result": {"has_person": 1, "violations": [...]}}。
-严格按照上述格式输出 JSON，不要添加任何多余的文本或解释。 /no_think
-"""
-
 
 def _frames_to_video_base64(frames: List[Any]) -> str:
     if not frames:
@@ -197,19 +184,6 @@ class RTSPInferenceClient:
         ]
         return messages, (time.time() - t_start) * 1000
 
-    def _build_verification_messages(self, frames: List[Any], initial_result_text: str) -> tuple:
-        t_start = time.time()
-        user_content = self._build_media_content(frames)
-        user_content.append({
-            "type": "text",
-            "text": f"上一轮输出结果如下，请核验它是否与当前画面对应：\n{initial_result_text}\n\n请只输出核验 JSON。"
-        })
-        messages = [
-            {"role": "system", "content": DEFAULT_VERIFICATION_PROMPT},
-            {"role": "user", "content": user_content}
-        ]
-        return messages, (time.time() - t_start) * 1000
-
     def _log_llm_call_time(self, call_time_ms: float):
         self._llm_call_count += 1
         self._total_llm_time_ms += call_time_ms
@@ -261,37 +235,11 @@ class RTSPInferenceClient:
                 if model_json is not None else _strip_code_fences(content)
             )
 
-            verification_api_time_ms = 0.0
-            verification_media_processing_time_ms = 0.0
-
-            if ENABLE_VLM_VERIFICATION:
-                verification_messages, verification_media_processing_time_ms = (
-                    self._build_verification_messages(frames, result_text)
-                )
-                verification_content, verification_api_time_ms = self._call_vlm(verification_messages)
-                print(f"[VLM] 复核响应: {verification_content}")
-
-                verification_json = _parse_json_object(verification_content)
-                verification_text = (
-                    json.dumps(verification_json, ensure_ascii=False)
-                    if verification_json is not None else _strip_code_fences(verification_content)
-                )
-
-                verification_match = (
-                    _parse_bool_flag(verification_json.get("match", 0))
-                    if verification_json is not None else False
-                )
-                if not verification_match:
-                    print(f"[VLM MISMATCH] 初次结果与画面不一致，丢弃本次结果。verification={verification_text}")
-                    return
-
             final_result = {
                 "mode": "video" if USE_VIDEO_MODE else "image",
                 "api_time_ms": first_api_time_ms,
-                "total_api_time_ms": first_api_time_ms + verification_api_time_ms,
                 "server_response": {"result": result_text},
                 "media_processing_time_ms": media_processing_time_ms,
-                "verification_media_processing_time_ms": verification_media_processing_time_ms,
                 "frame_count": len(frames),
                 "sample_fps": SAMPLE_FPS,
             }
@@ -304,10 +252,8 @@ class RTSPInferenceClient:
             empty_result = {
                 "mode": "video" if USE_VIDEO_MODE else "image",
                 "api_time_ms": 0.0,
-                "total_api_time_ms": 0.0,
                 "server_response": {"result": '{"has_person": -1, "violations": []}'},
                 "media_processing_time_ms": 0.0,
-                "verification_media_processing_time_ms": 0.0,
                 "frame_count": 0,
                 "sample_fps": SAMPLE_FPS,
             }

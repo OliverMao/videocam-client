@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import queue
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,18 +14,19 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from agent import QAAgent
 from vectordb import FrameCaptureService, VectorDB, compute_embedding
-
+from RTSPInferenceClientOpenAI import RTSPInferenceClient
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 JETSON = False  # 是否在 Jetson 上运行
-if JETSON:
-    from RTSPInferenceClientOpenAIJetson import RTSPInferenceClient
-    RTSP_URL = "http://srs:8080/live/livestream.flv"  # Jetson 上使用 v4l2rtspserver 输出的本地设备路径
-else:
-    from RTSPInferenceClientOpenAI import RTSPInferenceClient
-    RTSP_URL = "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"
+# if JETSON:
+#     from RTSPInferenceClientOpenAIJetson import RTSPInferenceClient
+#     RTSP_URL = "http://srs:8080/live/livestream.flv"  # Jetson 上使用 v4l2rtspserver 输出的本地设备路径
+# else:
+#     from RTSPInferenceClientOpenAI import RTSPInferenceClient
+#     RTSP_URL = "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101"
 
+RTSP_URL = os.environ.get("RTSP_URL", "rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101")
 
 DEFAULT_OPENAI_API_BASE = "http://116.238.240.2:30630"
 DEFAULT_OPENAI_API_KEY = "vllm"
