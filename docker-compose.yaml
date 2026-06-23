@@ -7,8 +7,8 @@ services:
     ports:
       - "28001:28001"
     environment:
-      - RTSP_URL=rtsp://admin:qazwsx168@192.168.158.195:554/Streaming/Channels/101
-      - OPENAI_API_BASE=http://116.238.240.2:30264/v1                                                              # 负载均衡地址
+      - RTSP_URL=rtsp://${HOST}:8554/cam_main
+      - OPENAI_API_BASE=http://${GPU_HOST}:${VLLM_PORT}/v1                                                              # 负载均衡地址
       - MODEL_NAME=Qwen3.6-35B-A3B   # 模型名称
       - INTERVAL_SEC=1                                                                                # 调用API间隔秒数    
       - SAMPLE_FPS=4                                                                                 # 每秒抽几帧
@@ -23,7 +23,7 @@ services:
     container_name: video-pipeline
     network_mode: host
     privileged: true
-    command: ["uv", "run", "pipeline.py","--fps", "0.3"]
+    command: ["uv", "run", "pipeline.py", "--fps", "0.3"]
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
@@ -32,15 +32,9 @@ services:
       - BLUR_KERNEL=31
       - NOISE_STRENGTH=30
       - PYTHONUNBUFFERED=1
+      - GPU_HOST=${GPU_HOST}
     volumes:
       - ./pipeline:/app
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -57,9 +51,9 @@ services:
       - /app/node_modules
     network_mode: host
     environment:
-      - VITE_STREAM_URL=http://192.168.151.158:8889/cam_main/whep
-      - VITE_COMBINED_STREAM_URL=http://192.168.151.158:8889/live/combined/whep
-      - VITE_API_HOST=http://192.168.151.158:28001/api
+      - VITE_STREAM_URL=http://${HOST}:8889/cam_main/whep
+      - VITE_COMBINED_STREAM_URL=http://${HOST}:8889/live/combined/whep
+      - VITE_API_HOST=http://${HOST}:28001/api
       - VITE_IS_JETSON=false
       - VITE_QA_DEV_MODE=true
       - VITE_LOAD_DATA_INTERVAL=500

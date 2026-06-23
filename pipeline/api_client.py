@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import asyncio
 from io import BytesIO
-
+import os
 import cv2
 import httpx
 import numpy as np
 from PIL import Image
 
+GPU_HOST = os.environ.get("GPU_HOST", "")  # GPU 服务器地址
+MAE_PORT = os.environ.get("MAE_PORT", "30852")  # MAE 端口
+
 # ----- API 配置 -----
-API_URL_1 = "http://116.238.240.2:30852/process"
-API_URL_2 = "http://116.238.240.2:31344/reconstruct"
+API_URL_1 = f"http://{GPU_HOST}:{MAE_PORT}/process"
+API_URL_2 = f"http://{GPU_HOST}:31344/reconstruct"  # 不用了
 _async_client: httpx.AsyncClient | None = None
 
 

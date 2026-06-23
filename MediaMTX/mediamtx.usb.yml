@@ -19,6 +19,8 @@ metricsAddress: :9998
 paths:
   # 主码流(高清,适合查看)
   cam_main:
+    publishUser: ""       # 允许匿名发布
+    publishPass: ""
   # ---- pipeline 推流路径(无 source,接受 RTMP 推送) --------------------------
   live/original:
   live/action1:
