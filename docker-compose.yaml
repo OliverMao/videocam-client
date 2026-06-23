@@ -17,6 +17,11 @@ services:
     volumes:
       - ./server/:/app
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
 
   pipeline:
     build: ./pipeline
@@ -63,6 +68,11 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
 
   mediamtx:
     image: bluenviron/mediamtx:latest
@@ -73,4 +83,8 @@ services:
       - ./MediaMTX/mediamtx.yml:/mediamtx.yml
       - ./MediaMTX/hls:/hls      # HLS 切片输出目录(可选,留着方便调试)
       - ./MediaMTX/recordings:/recordings  # 录像目录(可选)
-
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
