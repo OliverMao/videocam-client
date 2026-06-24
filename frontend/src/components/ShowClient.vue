@@ -197,7 +197,7 @@ onUnmounted(() => {
     </div>
 
     <!-- QA -->
-    <QAZone />
+    <!-- <QAZone /> -->
 
     <div v-if="data || loading" class="content-grid">
       <section class="tech-panel video-panel" v-if="!is_Jetson">
