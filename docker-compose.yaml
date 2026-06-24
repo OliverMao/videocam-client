@@ -4,9 +4,9 @@ services:
   app:
     build: ./server
     container_name: video-api
-    ports:
-      - "28001:28001"
+    network_mode: host
     environment:
+      - http_proxy=${http_proxy}
       - RTSP_URL=rtsp://${HOST}:8554/cam_main
       - OPENAI_API_BASE=http://${GPU_HOST}:${VLLM_PORT}/v1                                                              # 负载均衡地址
       - MODEL_NAME=Qwen3.6-35B-A3B   # 模型名称
@@ -30,6 +30,7 @@ services:
     privileged: true
     command: ["uv", "run", "pipeline.py", "--fps", "0.3"]
     environment:
+      - http_proxy=${http_proxy}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
       - RTSP_URL=rtsp://127.0.0.1:8554/cam_main
