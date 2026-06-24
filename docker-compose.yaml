@@ -39,6 +39,7 @@ services:
       - NOISE_STRENGTH=30
       - PYTHONUNBUFFERED=1
       - GPU_HOST=${GPU_HOST}
+      - MAE_PORT=${MAE_PORT}
     volumes:
       - ./pipeline:/app
     restart: unless-stopped
