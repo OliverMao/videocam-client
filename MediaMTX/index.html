@@ -46,7 +46,7 @@
 
   <script>
     // MediaMTX 跑在哪台机器就填哪个 IP
-    const HOST = '192.168.137.144';          // 自动用当前访问页面的域名/IP
+    const HOST = '192.168.158.235';          // 自动用当前访问页面的域名/IP
     document.getElementById('base').textContent = HOST;
 
     // ============ WebRTC ============
@@ -63,7 +63,7 @@
       await pc.setLocalDescription(offer);
 
       // MediaMTX WHIP 协议(用 cam_sub 看副码流,带宽小;要主码流改 cam_main)
-      const res = await fetch(`http://${HOST}:8889/cam_main/whep`, {
+      const res = await fetch(`http://${HOST}:8889/live/combined/whep`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/sdp' },
         body: offer.sdp

@@ -3,13 +3,23 @@ set -e
 
 GST_PID_FILE="/tmp/gst_v4l2_rtsp.pid"
 GST_LOG_FILE="/tmp/gst_v4l2_rtsp.log"
+PIPELINE_PID_FILE="/tmp/pipeline.pid"
+PIPELINE_LOG_FILE="/tmp/pipeline.log"
+PIPELINE_DIR="${PIPELINE_DIR:-/home/aiflow/videocam/videocam-client/pipeline}"
+PIPELINE_FPS="${PIPELINE_FPS:-6}"
+PIPELINE_RTMP_BASE="${PIPELINE_RTMP_BASE:-rtmp://127.0.0.1:1935/live/combined}"
+PIPELINE_RTSP_URL="${PIPELINE_RTSP_URL:-rtsp://127.0.0.1:8554/cam_main}"
 RTSP_URL="${RTSP_URL:-rtsp://127.0.0.1:8554/cam_main}"
 VIDEO_DEVICE="${VIDEO_DEVICE:-/dev/video0}"
 MAC_CAMERA_INDEX="${MAC_CAMERA_INDEX:-0}"
-WIDTH=1920
-HEIGHT=1080
-FRAMERATE=30
+WIDTH=1280
+HEIGHT=720
+FRAMERATE=25
 BITRATE=4000000
+
+
+# gst-launch-1.0 -e         v4l2src device=/dev/video0 do-timestamp=true         ! image/jpeg,width=1280,height=720,framerate=25/1         ! jpegdec         ! nvvidconv         ! "video/x-raw(memory:NVMM),format=NV12"         ! nvv4l2h264enc maxperf-enable=1 insert-sps-pps=true         ! h264parse         ! rtspclientsink location=rtsp://127.0.0.1:8554/cam_main
+
 
 detect_hardware() {
     case "$(uname -s)" in
@@ -149,6 +159,29 @@ else
     build_pipeline > "$GST_LOG_FILE" 2>&1 &
     echo $! > "$GST_PID_FILE"
     echo "GStreamer 已启动 (PID $(cat $GST_PID_FILE))"
+fi
+
+# --- pipeline (宿主机 uv 跑) ---
+if [ -f "$PIPELINE_PID_FILE" ] && kill -0 $(cat "$PIPELINE_PID_FILE") 2>/dev/null; then
+    echo "pipeline 已在运行 (PID $(cat $PIPELINE_PID_FILE))"
+else
+    if [ -d "$PIPELINE_DIR" ]; then
+        echo "=== 启动 pipeline (uv 跑) ==="
+        if [ ! -d "$PIPELINE_DIR/.venv" ]; then
+            echo "未发现 .venv,先 uv sync ..."
+            ( cd "$PIPELINE_DIR" && uv sync ) || { echo "uv sync 失败,跳过 pipeline"; }
+        fi
+
+        (
+            cd "$PIPELINE_DIR"
+            exec uv run pipeline.py --fps "$PIPELINE_FPS"
+        ) > "$PIPELINE_LOG_FILE" 2>&1 &
+        # 拿到的是 subshell 的 PID(里面运行 uv),后续 stop 用 pkill pipeline.py 兜底
+        echo $! > "$PIPELINE_PID_FILE"
+        echo "pipeline 已启动 (PID $(cat $PIPELINE_PID_FILE), 日志 $PIPELINE_LOG_FILE)"
+    else
+        echo "PIPELINE_DIR 不存在 ($PIPELINE_DIR),跳过 pipeline"
+    fi
 fi
 
 echo "=== 全部启动完毕 ==="

@@ -1,9 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { fetchShowClientData, parseInferenceResult, getWebSocketUrl } from '../api/index.js'
+import { fetchShowClientData, parseInferenceResult } from '../api/index.js'
 import StreamPlayer from './StreamPlayer.vue'
-import QAZone from './QAZone.vue'
-import { Cigarette, Swords as Fight, Flame as Fire, PersonStanding as Fall } from 'lucide-vue-next'
 
 const streamUrl = import.meta.env.VITE_STREAM_URL
 const combinedStreamUrl = import.meta.env.VITE_COMBINED_STREAM_URL
@@ -13,9 +11,7 @@ const typingDuration = parseInt(import.meta.env.VITE_TYPING_DURATION || '500', 1
 const freshInterval = parseInt(import.meta.env.VITE_FRESH_INTERVAL || '3000', 10)
 
 const streamMode = ref('main')
-const activeStreamUrl = computed(() =>
-  streamMode.value === 'combined' ? combinedStreamUrl : streamUrl
-)
+
 function toggleStream() {
   streamMode.value = streamMode.value === 'main' ? 'combined' : 'main'
 }
@@ -26,16 +22,23 @@ const error = ref(null)
 const loading = ref(false)
 const streamStatus = ref('idle')
 const location = 'TeleAI-展厅'
+const asset = (name) => `/images/${name}`
 
 const descriptionHistory = ref([])
 let entryId = 0
 const MAX_HISTORY = 20
 
 const detectionItems = [
-  { key: '吸烟', label: '吸烟监测', iconComponent: Cigarette },
-  { key: '打架', label: '冲突识别', iconComponent: Fight },
-  { key: '摔倒', label: '跌倒监测', iconComponent: Fall },
+  { key: '摔倒', label: '摔倒监测', iconNormal: asset('摔倒n1.jpg'), iconAlert: asset('摔倒n2.jpg') },
+  { key: '挥手', label: '挥手监测', iconNormal: asset('挥手n1.jpg'), iconAlert: asset('挥手n2.jpg') },
+  { key: '弯腰', label: '弯腰监测', iconNormal: asset('弯腰n1.jpg'), iconAlert: asset('弯腰n2.jpg') },
+  { key: '打架', label: '打架监测', iconNormal: asset('打架n1.jpg'), iconAlert: asset('打架n2.jpg') },
 ]
+
+// ===== TEMP MOCK: 已关闭 =====
+const MOCK_TEST = false
+const MOCK_VIOLATIONS = []
+// ===========================
 
 const violationKeys = computed(() => new Set(parsedResult.value?.violations ?? []))
 
@@ -48,7 +51,7 @@ function onStreamError(msg) { error.value = msg; streamStatus.value = 'error' }
 function onStreamConnected() { error.value = null; streamStatus.value = 'playing' }
 function onStreamDisconnected() { streamStatus.value = 'idle' }
 
-const ESTIMATED_ITEM_HEIGHT = 80
+const ESTIMATED_ITEM_HEIGHT = 150
 const RENDER_BUFFER = 20
 const historyContainer = ref(null)
 const scrollTop = ref(0)
@@ -71,14 +74,38 @@ function updateContainerHeight() {
   if (historyContainer.value) containerHeight.value = historyContainer.value.clientHeight
 }
 
+function getDetectionIcon(key) {
+  const item = detectionItems.find(d => d.key === key)
+  if (!item) return ''
+  return violationKeys.value.has(key) ? item.iconAlert : item.iconNormal
+}
+
 async function loadData() {
   if (loading.value) return
   try {
     loading.value = true
     error.value = null
+
+    // ===== TEMP MOCK: 测试挥手+弯腰异常，测完删 =====
+    if (MOCK_TEST) {
+      const mockResult = {
+        server_response: {
+          result: JSON.stringify({
+            has_person: 1,
+            violations: MOCK_VIOLATIONS,
+            description: '画面中检测到有人物举手挥动，同时上半身前倾弯腰，疑似身体不适。'
+          })
+        }
+      }
+      data.value = mockResult
+      parsedResult.value = parseInferenceResult(mockResult.server_response.result)
+    } else {
+    // =============================================
     const result = await fetchShowClientData()
     data.value = result
     parsedResult.value = parseInferenceResult(result.server_response.result)
+    } // TEMP MOCK end
+
     if (parsedResult.value?.description) {
       const fullText = parsedResult.value.description
       const currentViolationsStr = (parsedResult.value.violations || []).join(',')
@@ -153,99 +180,106 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- 增加 :class 判断，为 Jetson 环境注入专属样式类 -->
   <div class="tech-dashboard" :class="{ 'is-jetson': is_Jetson }">
-    <div class="bg-layer">
-      <div class="dashboard-bg"></div>
-      <div class="dashboard-grid-pulse"></div>
-      <div class="corner-glow corner-glow-tl"></div>
-      <div class="corner-glow corner-glow-br"></div>
-      <div class="corner-glow corner-glow-tr"></div>
-      <div class="light-beam"></div>
-      <div class="particle particle-1"></div>
-      <div class="particle particle-2"></div>
-      <div class="particle particle-3"></div>
-      <div class="particle particle-4"></div>
-      <div class="particle particle-5"></div>
-      <div class="particle particle-6"></div>
-      <div class="particle particle-7"></div>
-      <div class="particle particle-8"></div>
-      <div class="particle particle-9"></div>
-      <div class="particle particle-10"></div>
-      <div class="particle particle-11"></div>
-      <div class="particle particle-12"></div>
-      <div class="glow-orb glow-orb-1"></div>
-      <div class="glow-orb glow-orb-2"></div>
-    </div>
+    <!-- Full-screen background image -->
+    <img class="bg-image" :src="asset('bg.png')" alt="" />
 
+    <!-- Top decorative strip -->
+    <img class="frame-top" :src="asset('frame-top.png')" alt="" />
+
+    <!-- Left / Right decorative side images -->
+    <img class="side-image-left" :src="asset('左侧.png')" alt="" />
+    <img class="side-image-right" :src="asset('右侧.png')" alt="" />
+
+    <!-- Header -->
     <header class="tech-header">
-      <div style="display: flex; align-items: center; gap: 1rem; justify-content: center;">
-        <div>
-          <img src="/AIFlow.png" alt="AI FLOW" style="width: 53px;">
-        </div>
-        <div class="brand" v-if="!is_Jetson">
-          <h1>TeleAI 隐私相机演示系统</h1>
-        </div>
-        <div class="brand" v-else>
-          <h1>TeleAI 隐私相机</h1>
+      <div class="header-inner">
+        <img :src="asset('AIFlow.png')" alt="AI FLOW" class="header-logo" />
+        <div class="brand">
+          <h1 v-if="!is_Jetson">TeleAI 隐私相机演示系统</h1>
+          <h1 v-else>TeleAI 隐私相机</h1>
         </div>
       </div>
     </header>
 
+    <!-- Error alert -->
     <div v-if="error && streamStatus !== 'playing'" class="tech-alert">
       <span>{{ error }}</span>
     </div>
 
-    <!-- QA -->
-    <!-- <QAZone /> -->
-
+    <!-- Main content grid -->
     <div v-if="data || loading" class="content-grid">
+      <!-- 1. Video panel -->
       <section class="tech-panel video-panel" v-if="!is_Jetson">
         <div class="panel-frame">
+          <img class="panel-title-img title-video" :src="asset('监控视频标题.png')" alt="监控视频" />
           <div class="panel-content">
             <div class="video-top-bar">
-              <span class="video-tip-text">原始视频仅用于展厅展示，云端无法获取原始视频。</span>
-              <button class="stream-toggle-btn" @click="toggleStream">
+              <span class="video-tip-text"><img class="warning-icon-img" :src="asset('frame-corner.png')" alt="警告" /> 原始视频仅用于展厅展示，云端无法获取原始视频。</span>
+              <div class="toggle-group">
                 <span class="toggle-label">{{ streamMode === 'main' ? '原始画面' : '隐私处理' }}</span>
-                <span class="toggle-indicator">
-                  <span class="toggle-dot" :class="{ active: streamMode === 'combined' }"></span>
-                </span>
-              </button>
+                <button class="stream-toggle-btn" @click="toggleStream">
+                  <span class="toggle-track">
+                    <span class="toggle-dot" :class="{ active: streamMode === 'combined' }"></span>
+                  </span>
+                </button>
+              </div>
             </div>
-            <StreamPlayer
-               :streamUrl="streamUrl" @error="onStreamError"
-              @connected="onStreamConnected" @disconnected="onStreamDisconnected" />
-            <StreamPlayer
-              :style="{ position: 'absolute', width: streamMode === 'combined' ? '100%' : '1px', height: streamMode === 'combined' ? '100%' : '1px' }"
-              :privacy-mode="'True'" privacy-grid-cols="2" privacy-grid-rows="2" privacy-cell-width="2560"
-              privacy-cell-height="1440" privacy-crop-width="2000" :streamUrl="combinedStreamUrl" @error="onStreamError"
-              @connected="onStreamConnected" @disconnected="onStreamDisconnected" />
+            <div class="stream-stage">
+              <!-- 两路流保持常驻，只切换显示层，避免切换到隐私处理时重新建连导致黑屏等待 -->
+              <StreamPlayer
+                class="stream-layer"
+                :cropRight="true"
+                :class="{ visible: streamMode === 'main' }"
+                :streamUrl="streamUrl"
+                @error="onStreamError"
+                @connected="onStreamConnected"
+                @disconnected="onStreamDisconnected"
+              />
+              <StreamPlayer
+                class="stream-layer"
+                :class="{ visible: streamMode === 'combined' }"
+                :privacy-mode="'True'"
+                privacy-grid-cols="2"
+                privacy-grid-rows="2"
+                privacy-cell-width="2560"
+                privacy-cell-height="1440"
+                privacy-crop-width="2000"
+                :streamUrl="combinedStreamUrl"
+                @error="onStreamError"
+                @connected="onStreamConnected"
+                @disconnected="onStreamDisconnected"
+              />
+            </div>
           </div>
         </div>
       </section>
 
+      <!-- 2. Semantic description panel -->
       <section class="tech-panel desc-panel" v-if="!is_Jetson">
         <div class="panel-frame">
-          <div class="panel-header">
-            <div class="header-left">
-              <span class="header-title">画面语义解析</span>
-            </div>
-            <span class="header-tag">AI INFERENCE</span>
-          </div>
+          <img class="panel-title-img title-desc" :src="asset('画面语义标题.png')" alt="画面语义解析" />
           <div class="panel-content desc-content" ref="historyContainer" @scroll="onScroll">
             <div v-if="descriptionHistory.length === 0" class="placeholder">等待模型推理...</div>
             <div v-else class="virtual-list" :style="{ height: totalHeight + 'px' }">
               <div class="virtual-list-inner" :style="{ transform: 'translateY(' + offsetY + 'px)' }">
                 <div class="list-wrapper">
-                  <div v-for="entry in visibleItems" :key="entry.id" class="history-entry"
-                    :class="{ latest: entry.id === descriptionHistory[0]?.id }">
-                    <div class="entry-meta">
-                      <span class="entry-location">{{ location }}</span>
-                      <span class="entry-time">{{ entry.time }}</span>
+                  <div
+                    v-for="entry in visibleItems"
+                    :key="entry.id"
+                    class="history-entry-wrapper"
+                    :class="{ 'has-violations': entry.violations.length > 0, latest: entry.id === descriptionHistory[0]?.id }"
+                  >
+                    <div class="history-entry">
+                      <div class="entry-meta">
+                        <span class="entry-location">{{ location }}</span>
+                        <span class="entry-time">{{ entry.time }}</span>
+                      </div>
+                      <p class="desc-text">
+                        {{ entry.displayedDescription !== undefined ? entry.displayedDescription : entry.description }}
+                      </p>
                     </div>
-                    <p class="desc-text">{{ entry.displayedDescription !== undefined ? entry.displayedDescription :
-                      entry.description }}</p>
-                    <div v-if="entry.violations.length > 0" class="entry-violations">
+                    <div v-if="entry.violations.length > 0" class="entry-violations-bar">
                       <span v-for="v in entry.violations" :key="v" class="violation-tag">{{ v }}</span>
                     </div>
                   </div>
@@ -256,29 +290,37 @@ onUnmounted(() => {
         </div>
       </section>
 
+      <!-- 3. Anomaly detection panel -->
       <section class="tech-panel status-panel">
         <div class="panel-frame">
-          <div class="panel-header">
-            <div class="header-left">
-              <span class="header-title">异常行为监测</span>
-            </div>
-            <span class="header-tag">VIOLATION DET</span>
-          </div>
+          <img class="panel-title-img title-status" :src="asset('异常行为标题.png')" alt="异常行为监测" />
           <div class="panel-content detection-grid">
-            <div v-for="item in detectionItems" :key="item.key" class="detection-card"
-              :class="{ active: violationKeys.has(item.key) }">
+            <div
+              v-for="item in detectionItems"
+              :key="item.key"
+              class="detection-card"
+              :class="{ active: violationKeys.has(item.key) }"
+            >
+              <img
+                v-if="violationKeys.has(item.key)"
+                :src="asset('告警背景.png')"
+                class="alert-bg-img"
+                alt=""
+              />
               <div class="card-top">
-                <component :is="item.iconComponent" class="card-icon-svg" />
+                <img
+                  class="card-icon-img"
+                  :src="getDetectionIcon(item.key)"
+                  :alt="item.label"
+                />
                 <span class="card-label">{{ item.label }}</span>
               </div>
               <div class="card-status-badge" :class="{ active: violationKeys.has(item.key) }">
-                <span class="status-dot"></span>
-                <span class="status-text">
-                  {{ violationKeys.has(item.key) ? '监测到异常' : '正常' }}
-                </span>
+                <div class="status-content" v-if="!violationKeys.has(item.key)">
+                  <span class="status-dot"></span>
+                  <span class="status-text">正常</span>
+                </div>
               </div>
-              <div v-if="violationKeys.has(item.key)" class="alert-watermark">WARN</div>
-              <div v-if="violationKeys.has(item.key)" class="scan-line"></div>
             </div>
           </div>
         </div>
@@ -288,505 +330,174 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* ========================================
+   CSS Variables
+   ======================================== */
 .tech-dashboard {
-  --bg-deep: #05051a;
-  --bg-mid: #0a0a2e;
-  --bg-panel: rgba(10, 15, 50, 0.75);
-  --border-tech: rgba(100, 100, 255, 0.35);
-  --accent-blue: #6366f1;
-  --accent-purple: #a855f7;
+  --bg-deep: #050a1a;
+  --bg-panel: rgba(5, 18, 50, 0.85);
+  --border-tech: rgba(60, 130, 220, 0.3);
+  --accent-blue: #4a90d9;
   --accent-cyan: #22d3ee;
+  --accent-purple: #a855f7;
   --safe: #34d399;
   --alert: #f43f5e;
-  --text-primary: #f1f5f9;
+  --text-primary: #e2e8f0;
   --text-secondary: #94a3b8;
   --font-tech: 'JetBrains Mono', 'Consolas', monospace;
-  --font-ui: system-ui, -apple-system, sans-serif;
+  --font-ui: system-ui, -apple-system, 'Microsoft YaHei', sans-serif;
 
   position: relative;
   width: 100%;
-  min-height: 100vh;
-  background-color: var(--bg-deep);
+  height: 100vh;
+  min-height: 720px;
+  background: var(--bg-deep);
   color: var(--text-primary);
   font-family: var(--font-ui);
-  padding: clamp(1rem, 2vw, 1.5rem);
-  overflow: visible;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
 }
 
-.bg-layer {
+/* ========================================
+   Background layer
+   ======================================== */
+.bg-image {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   pointer-events: none;
+  opacity: 0.85;
+  z-index: 0;
 }
 
-.dashboard-bg {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(ellipse at 20% 30%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 70%, rgba(168, 85, 247, 0.1) 0%, transparent 40%),
-    repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(99, 102, 241, 0.08) 40px),
-    repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(99, 102, 241, 0.08) 40px);
-}
-
-.dashboard-grid-pulse {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(34, 211, 238, 0.08) 40px),
-    repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(34, 211, 238, 0.08) 40px);
-  animation: gridPulse 3s ease-in-out infinite;
-}
-
-@keyframes gridPulse {
-
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-
-  50% {
-    opacity: 1;
-  }
-}
-
-.particle {
-  position: absolute;
-  border-radius: 50%;
-  pointer-events: none;
-  box-shadow: 0 0 6px currentColor;
-}
-
-.particle-1 {
-  width: 5px;
-  height: 5px;
-  color: var(--accent-cyan);
-  background: var(--accent-cyan);
-  top: 15%;
-  left: 10%;
-  animation: particleFloat1 8s ease-in-out infinite;
-}
-
-.particle-2 {
-  width: 4px;
-  height: 4px;
-  color: var(--accent-blue);
-  background: var(--accent-blue);
-  top: 45%;
-  left: 5%;
-  animation: particleFloat2 11s ease-in-out infinite;
-}
-
-.particle-3 {
-  width: 6px;
-  height: 6px;
-  color: var(--accent-purple);
-  background: var(--accent-purple);
-  top: 70%;
-  left: 20%;
-  animation: particleFloat1 9s ease-in-out infinite 1s;
-}
-
-.particle-4 {
-  width: 4px;
-  height: 4px;
-  color: var(--accent-cyan);
-  background: var(--accent-cyan);
-  top: 30%;
-  right: 15%;
-  animation: particleFloat2 10s ease-in-out infinite 2s;
-}
-
-.particle-5 {
-  width: 5px;
-  height: 5px;
-  color: var(--accent-purple);
-  background: var(--accent-purple);
-  top: 60%;
-  right: 8%;
-  animation: particleFloat1 7s ease-in-out infinite 0.5s;
-}
-
-.particle-6 {
-  width: 3px;
-  height: 3px;
-  color: var(--accent-cyan);
-  background: var(--accent-cyan);
-  top: 85%;
-  right: 25%;
-  animation: particleFloat2 12s ease-in-out infinite 3s;
-}
-
-.particle-7 {
-  width: 5px;
-  height: 5px;
-  color: var(--accent-blue);
-  background: var(--accent-blue);
-  top: 10%;
-  left: 50%;
-  animation: particleFloat1 9s ease-in-out infinite 4s;
-}
-
-.particle-8 {
-  width: 4px;
-  height: 4px;
-  color: var(--accent-purple);
-  background: var(--accent-purple);
-  top: 50%;
-  left: 80%;
-  animation: particleFloat2 8s ease-in-out infinite 1.5s;
-}
-
-.particle-9 {
-  width: 5px;
-  height: 5px;
-  color: var(--accent-purple);
-  background: var(--accent-purple);
-  top: 8%;
-  left: 25%;
-  animation: particleFloat1 7s ease-in-out infinite 0.5s;
-}
-
-.particle-10 {
-  width: 4px;
-  height: 4px;
-  color: var(--accent-cyan);
-  background: var(--accent-cyan);
-  top: 12%;
-  right: 40%;
-  animation: particleFloat2 9s ease-in-out infinite 2s;
-}
-
-.particle-11 {
-  width: 6px;
-  height: 6px;
-  color: var(--accent-blue);
-  background: var(--accent-blue);
-  top: 5%;
-  right: 15%;
-  animation: particleFloat1 8s ease-in-out infinite 1.5s;
-}
-
-.particle-12 {
-  width: 3px;
-  height: 3px;
-  color: var(--accent-cyan);
-  background: var(--accent-cyan);
-  top: 16%;
-  left: 75%;
-  animation: particleFloat2 10s ease-in-out infinite 3s;
-}
-
-@keyframes particleFloat1 {
-
-  0%,
-  100% {
-    opacity: 0;
-    transform: translateY(0) translateX(0) scale(1);
-  }
-
-  20% {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0.7;
-    transform: translateY(-50px) translateX(25px) scale(1.8);
-    box-shadow: 0 0 12px currentColor;
-  }
-
-  80% {
-    opacity: 1;
-  }
-}
-
-@keyframes particleFloat2 {
-
-  0%,
-  100% {
-    opacity: 0;
-    transform: translateY(0) translateX(0) scale(1);
-  }
-
-  20% {
-    opacity: 0.8;
-  }
-
-  50% {
-    opacity: 0.5;
-    transform: translateY(35px) translateX(-20px) scale(1.5);
-    box-shadow: 0 0 10px currentColor;
-  }
-
-  80% {
-    opacity: 0.8;
-  }
-}
-
-.corner-glow {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(70px);
-  pointer-events: none;
-  opacity: 0.7;
-}
-
-.corner-glow-tl {
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, rgba(99, 102, 241, 0.5), transparent 70%);
-  top: -180px;
-  left: -120px;
-  animation: cornerPulse 3s ease-in-out infinite alternate;
-}
-
-.corner-glow-br {
-  width: 450px;
-  height: 450px;
-  background: radial-gradient(circle, rgba(168, 85, 247, 0.45), transparent 70%);
-  bottom: -180px;
-  right: -120px;
-  animation: cornerPulse 3.5s ease-in-out infinite alternate-reverse;
-}
-
-.corner-glow-tr {
-  width: 350px;
-  height: 350px;
-  background: radial-gradient(circle, rgba(34, 211, 238, 0.35), transparent 70%);
-  top: -100px;
-  right: 10%;
-  animation: cornerPulse 4s ease-in-out infinite alternate 1s;
-}
-
-@keyframes cornerPulse {
-  0% {
-    opacity: 0.3;
-    transform: scale(1);
-  }
-
-  100% {
-    opacity: 0.8;
-    transform: scale(1.15);
-  }
-}
-
-.light-beam {
+.frame-top {
   position: absolute;
   top: 0;
-  left: -20%;
-  width: 25%;
-  height: 100%;
+  left: 0;
+  width: 100%;
+  height: auto;
   pointer-events: none;
-  background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.12) 30%, rgba(34, 211, 238, 0.15) 50%, rgba(168, 85, 247, 0.08) 70%, transparent);
-  transform: skewX(-15deg);
-  animation: beamSweep 6s ease-in-out infinite;
+  z-index: 1;
+  opacity: 1;
 }
 
-@keyframes beamSweep {
-  0% {
-    left: -25%;
-    opacity: 0;
-  }
-
-  8% {
-    opacity: 1;
-  }
-
-  45% {
-    left: 110%;
-    opacity: 1;
-  }
-
-  55% {
-    opacity: 0;
-  }
-}
-
-.glow-orb {
+/* ========================================
+   Side decorative images (1920x1080)
+   ======================================== */
+.side-image-left {
   position: absolute;
-  border-radius: 50%;
-  filter: blur(90px);
+  left: calc(16 / 1920 * 100vw);
+  top: calc(82 / 1080 * 100vh);
+  width: calc(300 / 1920 * 100vw);
+  height: calc(980 / 1080 * 100vh);
   pointer-events: none;
-  animation: orbFloat 14s ease-in-out infinite alternate;
+  z-index: 3;
+  opacity: 1;
 }
 
-.glow-orb-1 {
-  width: 450px;
-  height: 450px;
-  background: radial-gradient(circle, rgba(99, 102, 241, 0.35), transparent 70%);
-  top: -10%;
-  left: -5%;
+.side-image-right {
+  position: absolute;
+  left: calc(1604 / 1920 * 100vw);
+  top: calc(82 / 1080 * 100vh);
+  width: calc(300 / 1920 * 100vw);
+  height: calc(980 / 1080 * 100vh);
+  pointer-events: none;
+  z-index: 3;
+  opacity: 1;
 }
 
-.glow-orb-2 {
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, rgba(168, 85, 247, 0.3), transparent 70%);
-  bottom: -10%;
-  right: -5%;
-  animation-delay: -7s;
-}
-
-@keyframes orbFloat {
-  0% {
-    transform: translate(0, 0) scale(1);
-  }
-
-  100% {
-    transform: translate(40px, 30px) scale(1.05);
-  }
-}
-
-@keyframes scanMove {
-  0% {
-    transform: translateY(-10vh);
-  }
-
-  100% {
-    transform: translateY(110vh);
-  }
-}
-
+/* ========================================
+   Header
+   ======================================== */
 .tech-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border-tech);
-  margin-bottom: 1.5rem;
+  position: relative;
+  z-index: 10;
+  height: 78px;
+  padding: 0;
+  border-bottom: 0;
+  background: transparent;
+  pointer-events: none;
 }
 
-.brand {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+.header-inner {
+  display: none;
 }
 
-.brand-tag {
-  font-family: var(--font-tech);
-  font-size: 1.25rem;
-  font-weight: 900;
-  color: var(--accent-cyan);
-  text-transform: uppercase;
+.header-logo {
+  width: 48px;
+  height: auto;
 }
 
 .brand h1 {
   font-size: clamp(1.25rem, 2vw, 1.75rem);
   font-weight: 700;
   margin: 0;
-  background: linear-gradient(90deg, #e0e7ff, #c4b5fd, #a78bfa);
+  background: linear-gradient(90deg, #e0e7ff, #93c5fd, #60a5fa);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-.status-pill {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.4rem 0.8rem;
-  background: rgba(10, 15, 50, 0.8);
-  border: 1px solid var(--border-tech);
-  border-radius: 2rem;
-  font-family: var(--font-tech);
-  font-size: 0.8rem;
-}
-
-.pulse-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #475569;
-  transition: all 0.3s ease;
-}
-
-.pulse-dot.playing {
-  background: var(--safe);
-  box-shadow: 0 0 10px var(--safe);
-  animation: pulse 2s infinite;
-}
-
-.pulse-dot.connecting {
-  background: var(--accent-cyan);
-  animation: pulse 0.8s infinite;
-}
-
-.pulse-dot.error {
-  background: var(--alert);
-  box-shadow: 0 0 10px var(--alert);
-}
-
-.divider {
-  color: var(--border-tech);
-}
-
-.sys-id {
-  color: var(--text-secondary);
-}
-
-@keyframes pulse {
-
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-
-  50% {
-    opacity: 0.5;
-    transform: scale(1.3);
-  }
-}
-
+/* ========================================
+   Alert bar
+   ======================================== */
 .tech-alert {
+  position: relative;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
+  margin: 0 1.5rem;
   background: rgba(244, 63, 94, 0.15);
   border: 1px solid rgba(244, 63, 94, 0.4);
   border-radius: 0.5rem;
   color: #fda4af;
   font-family: var(--font-tech);
-  margin-bottom: 1rem;
-  animation: fadeIn 0.3s ease;
 }
 
-.alert-icon-svg {
-  width: 18px;
-  height: 18px;
-  stroke: #fda4af;
-}
-
-.header-icon-svg {
-  width: 18px;
-  height: 18px;
-  stroke: var(--accent-cyan);
-}
-
-.card-icon-svg {
-  width: 28px;
-  height: 28px;
-  stroke: var(--accent-cyan);
-  transition: stroke 0.3s ease, filter 0.3s ease;
-}
-
-.detection-card.active .card-icon-svg {
-  stroke: var(--alert);
-  filter: drop-shadow(0 0 6px rgba(244, 63, 94, 0.6));
-}
-
+/* ========================================
+   Content grid
+   ======================================== */
 .content-grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr 1fr;
-  gap: 1.25rem;
-  height: calc(100vh - 8rem);
+  position: relative;
+  z-index: 5;
+  flex: 1;
   min-height: 0;
 }
 
+/* Panel absolute positioning — based on 1920×1080 design reference */
+.content-grid .video-panel {
+  position: absolute;
+  left: calc(64 / 1920 * 100vw);
+  top: calc(40 / 1080 * 100vh);
+  width: calc(880 / 1920 * 100vw);
+  bottom: calc(58 / 1080 * 100vh);
+}
+
+.content-grid .desc-panel {
+  position: absolute;
+  left: calc(960 / 1920 * 100vw);
+  top: calc(40 / 1080 * 100vh);
+  width: calc(466 / 1920 * 100vw);
+  bottom: calc(58 / 1080 * 100vh);
+}
+
+.content-grid .status-panel {
+  position: absolute;
+  left: calc(1442 / 1920 * 100vw);
+  top: calc(40 / 1080 * 100vh);
+  width: calc(398.5 / 1920 * 100vw);
+  bottom: calc(58 / 1080 * 100vh);
+}
+
+/* ========================================
+   Tech panels
+   ======================================== */
 .tech-panel {
   display: flex;
   flex-direction: column;
@@ -801,7 +512,7 @@ onUnmounted(() => {
   border: 1px solid var(--border-tech);
   border-radius: 0.75rem;
   overflow: hidden;
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(12px);
   display: flex;
   flex-direction: column;
 }
@@ -812,65 +523,88 @@ onUnmounted(() => {
   inset: 0;
   border-radius: 0.75rem;
   padding: 1px;
-  background: linear-gradient(135deg, transparent 35%, var(--accent-blue) 50%, var(--accent-purple) 65%, transparent 75%);
+  background: linear-gradient(135deg, transparent 35%, var(--accent-blue) 50%, var(--accent-cyan) 65%, transparent 75%);
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   pointer-events: none;
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.75rem 1rem;
-  background: rgba(5, 5, 30, 0.6);
-  border-bottom: 1px solid var(--border-tech);
+.panel-title-img {
+  display: block;
+  width: 100%;
+  height: 60px;
+  margin: 0;
+  object-fit: fill;
+  object-position: left center;
+  flex-shrink: 0;
 }
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.header-title {
-  font-size: 0.9rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-}
-
-.header-tag {
-  font-family: var(--font-tech);
-  font-size: 0.8rem;
-  color: var(--accent-purple);
-  opacity: 0.8;
-  letter-spacing: 0.1em;
+.title-video,
+.title-desc,
+.title-status {
+  width: 100%;
+  height: 60px;
+  object-fit: fill;
 }
 
 .panel-content {
   flex: 1;
   min-height: 0;
-  padding: 1rem;
+  padding: 0.75rem 1rem;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
+/* ========================================
+   Video panel
+   ======================================== */
 .video-panel .panel-content {
   padding: 0;
-  background: #020210;
+  background: rgba(0, 53, 104, 0.32);
+  backdrop-filter: blur(16px);
+  box-shadow: inset 0px 0px 16px 4px rgba(36, 179, 255, 0.3);
+  border-radius: 8px;
+  border: 1px solid #3A75D7;
   position: relative;
-  display: flex;
-  flex-direction: column;
+  overflow: hidden;
 }
 
-.video-panel :deep(video),
-.video-panel :deep(canvas) {
+.stream-stage {
+  position: absolute;
+  left: 1rem;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #000;
+}
+
+.stream-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.stream-layer.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.stream-stage :deep(video),
+.stream-stage :deep(canvas) {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  object-position: center;
 }
 
 .video-top-bar {
@@ -882,116 +616,113 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: #ff0000;
-  padding: 6px 12px;
+  height: 52px;
+  background: rgba(255, 136, 38, 0.2);
+  box-shadow: inset 0px 0px 16px 0px rgba(255, 136, 38, 0.7);
+  border-radius: 7px 7px 0px 0px;
+  padding: 0 18px;
   pointer-events: none;
 }
 
 .video-tip-text {
-  color: #ffffff;
-  font-size: 28px;
+  color: #ffd8a8;
+  display: flex;
+  align-items: center;
+  font-size: clamp(0.85rem, 1.3vw, 1rem);
   font-weight: 500;
   letter-spacing: 0.5px;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
 }
 
-.stream-toggle-btn {
+.warning-icon-img {
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.warning-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  border-radius: 50%;
+  color: #fff;
+  background: #ff8a1f;
+  font-weight: 900;
+}
+
+.toggle-group {
   pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.3rem 0.8rem;
-  background: rgba(5, 5, 30, 0.75);
-  border: 1px solid var(--border-tech);
-  border-radius: 2rem;
-  color: var(--text-primary);
-  font-family: var(--font-tech);
-  font-size: 0.75rem;
-  letter-spacing: 0.05em;
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-  transition: all 0.25s ease;
   flex-shrink: 0;
 }
 
-.stream-toggle-btn:hover {
-  background: rgba(99, 102, 241, 0.25);
-  border-color: var(--accent-blue);
+.toggle-label {
+  font-family: var(--font-tech);
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  white-space: nowrap;
 }
 
-.toggle-indicator {
+.stream-toggle-btn {
   display: flex;
   align-items: center;
-  width: 28px;
-  height: 16px;
-  background: rgba(99, 102, 241, 0.2);
-  border-radius: 8px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.toggle-track {
+  display: flex;
+  align-items: center;
+  width: 46px;
+  height: 26px;
+  border-radius: 99px;
+  background: linear-gradient(270deg, #03305B 0%, #0082FF 100%);
+  border: 1px solid #288EF5;
   position: relative;
-  transition: background 0.25s ease;
+  transition: all 0.25s ease;
 }
 
 .toggle-dot {
-  width: 12px;
-  height: 12px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  background: var(--accent-cyan);
-  box-shadow: 0 0 6px var(--accent-cyan);
+  background: linear-gradient(270deg, #007BFF 0%, #B7E0FF 100%);
+  box-shadow: 0px 2px 4px 0px rgba(0, 0, 0, 0.3);
+  border: 1px solid #B8DAFF;
   position: absolute;
   left: 2px;
   transition: all 0.25s ease;
 }
 
 .toggle-dot.active {
-  left: 14px;
-  background: var(--accent-purple);
-  box-shadow: 0 0 6px var(--accent-purple);
+  left: 22px;
 }
 
-.combined-labels {
-  position: absolute;
-  inset: 0;
-  z-index: 15;
-  pointer-events: none;
-}
-
-.combined-label {
-  position: absolute;
-  padding: 4px 14px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  font-family: var(--font-ui);
-  font-size: 0.85rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  border-radius: 4px;
-  backdrop-filter: blur(4px);
-}
-
-.label-top {
-  top: 4%;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.label-bl {
-  top: 54%;
-  left: 3%;
-}
-
-.label-br {
-  top: 54%;
-  left: 53%;
-}
-
+/* ========================================
+   Description panel
+   ======================================== */
 .desc-content {
-  font-size: clamp(0.95rem, 1.1vw, 1.15rem);
-  line-height: 1.8;
+  font-size: clamp(0.9rem, 1vw, 1.05rem);
+  line-height: 1.7;
   color: var(--text-secondary);
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
   flex: 1;
   min-height: 0;
+  scrollbar-width: none;
+}
+
+.desc-content::-webkit-scrollbar {
+  display: none;
 }
 
 .virtual-list {
@@ -1007,30 +738,58 @@ onUnmounted(() => {
 .list-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.5rem;
 }
 
-.history-entry {
-  border-bottom: 1px solid rgba(99, 102, 241, 0.15);
-  padding-bottom: 0.75rem;
+/* Wrapper: each entry + optional violation bar */
+.history-entry-wrapper {
   flex-shrink: 0;
 }
 
-.history-entry.latest {
-  border-bottom-color: rgba(99, 102, 241, 0.35);
+.history-entry-wrapper.latest .history-entry {
   animation: slideIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 @keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(-16px);
-  }
+  from { opacity: 0; transform: translateY(-12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* Normal card */
+.history-entry {
+  background: rgba(0, 21, 42, 0.6);
+  border: 1px solid #063560;
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+}
+
+/* Violation card — red gradient, no bottom radius */
+.history-entry-wrapper.has-violations .history-entry {
+  background: linear-gradient(180deg, rgba(255, 78, 78, 0.15) 0%, rgba(255, 78, 78, 0.3) 100%);
+  border: none;
+  border-radius: 8px 8px 0 0;
+}
+.history-entry-wrapper.has-violations .entry-location {
+  color: var(--accent-cyan);
+}
+.history-entry-wrapper.has-violations .entry-time,
+.history-entry-wrapper.has-violations .desc-text {
+  color: #fff;
+}
+.history-entry-wrapper.has-violations .desc-text {
+  border-left-color: rgba(255, 255, 255, 0.5);
+}
+
+/* Violation bar below */
+.entry-violations-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  height: 36px;
+  background: rgba(255, 78, 78, 0.5);
+  border-radius: 0 0 8px 8px;
 }
 
 .entry-meta {
@@ -1039,45 +798,26 @@ onUnmounted(() => {
   gap: 0.75rem;
   margin-bottom: 0.4rem;
   font-family: var(--font-tech);
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .entry-location {
   color: var(--accent-cyan);
   font-weight: 600;
-  letter-spacing: 0.05em;
 }
 
 .entry-time {
   color: var(--text-secondary);
-  opacity: 0.7;
-}
-
-.entry-violations {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-top: 0.4rem;
-}
-
-.violation-tag {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  font-size: 0.9rem;
-  font-weight: 600;
-  font-family: var(--font-ui);
-  color: var(--alert);
-  background: rgba(244, 63, 94, 0.08);
-  border: 1px solid rgba(244, 63, 94, 0.3);
-  border-radius: 0.25rem;
+  opacity: 0.8;
 }
 
 .desc-text {
-  animation: fadeIn 0.5s ease;
   border-left: 2px solid var(--accent-blue);
-  padding-left: 0.75rem;
+  padding-left: 0.6rem;
   color: #cbd5e1;
   margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.55;
 }
 
 .placeholder {
@@ -1086,116 +826,75 @@ onUnmounted(() => {
   font-style: italic;
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* Violation tags inside the red bar */
+.entry-violations-bar .violation-tag {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
 }
 
-.desc-content {
-  scrollbar-width: none;
-}
-
-.desc-content::-webkit-scrollbar {
-  display: none;
-}
-
+/* ========================================
+   Detection panel
+   ======================================== */
 .detection-grid {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1.75rem;
+  padding: 1rem 1.15rem;
 }
 
 .detection-card {
-  background: rgba(5, 10, 40, 0.6);
-  border: 1px solid rgba(99, 102, 241, 0.2);
-  border-radius: 0.75rem;
-  padding: 1.25rem;
-  transition: all 0.3s ease;
   position: relative;
+  width: 100%;
+  min-height: 100px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: linear-gradient(360deg, rgba(84,255,204,0.3) 0%, rgba(84,255,204,0.05) 100%);
+  border: 1px solid rgba(124, 255, 222, 0.55);
+  border-radius: 8px;
+  padding: 0 24px;
+  box-shadow: 0px 4px 4px 0px rgba(0,0,0,0.25);
+  transition: all 0.25s ease;
   overflow: hidden;
 }
 
-@property --border-angle {
-  syntax: "<angle>";
-  inherits: true;
-  initial-value: 0deg;
+.detection-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid transparent;
+  background: linear-gradient(180deg, rgba(124, 255, 222, 0.2), rgba(124, 255, 222, 1)) border-box;
+  -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
 }
 
 .detection-card.active {
-  background:
-    radial-gradient(circle at 90% 10%, rgba(244, 63, 94, 0.15) 0%, transparent 60%),
-    repeating-linear-gradient(45deg, rgba(244, 63, 94, 0.03) 0, rgba(244, 63, 94, 0.03) 1px, transparent 1px, transparent 6px),
-    linear-gradient(135deg, rgba(244, 63, 94, 0.1) 0%, rgba(5, 10, 40, 0.8) 100%);
-  border-color: transparent;
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
-}
-
-.alert-watermark {
-  position: absolute;
-  right: -5px;
-  bottom: -15px;
-  font-size: 5rem;
-  font-family: var(--font-tech);
-  font-weight: 900;
-  font-style: italic;
-  color: rgba(244, 63, 94, 0.2);
-  pointer-events: none;
-  z-index: 0;
-  user-select: none;
-  letter-spacing: -2px;
-}
-
-@keyframes cardScan {
-  0% {
-    transform: translateY(-10px);
-    opacity: 0;
-  }
-
-  10% {
-    opacity: 1;
-  }
-
-  90% {
-    opacity: 1;
-  }
-
-  100% {
-    transform: translateY(120px);
-    opacity: 0;
-  }
+  background: rgba(255, 78, 78, 0.08);
+  border-color: rgba(236, 69, 78, 0.4);
+  box-shadow: 0 0 22px rgba(255, 78, 78, 0.12), 0px 4px 4px 0px rgba(0,0,0,0.25);
 }
 
 .detection-card.active::before {
-  background: var(--alert);
-  opacity: 0.8;
-  width: 3px;
+  background: linear-gradient(180deg, rgba(236, 69, 78, 0.2), rgba(236, 69, 78, 1)) border-box;
 }
 
 .detection-card.active::after {
   content: '';
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  border: 4px solid transparent;
-  background: conic-gradient(from var(--border-angle), transparent 10%, rgba(244, 63, 94, 0.15) 35%, var(--alert) 50%, transparent 60%, rgba(244, 63, 94, 0.15) 85%, var(--alert) 100%) border-box;
-  -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: flowBorder 2s linear infinite;
+  left: 50%;
+  bottom: -30px;
+  width: 494px;
+  height: 122px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, rgba(236,69,78,0) 0%, #EC454E 51.49%, rgba(236,69,78,0) 100%);
+  opacity: 0.27;
   pointer-events: none;
-}
-
-@keyframes flowBorder {
-  to {
-    --border-angle: 360deg;
-  }
 }
 
 .card-top {
@@ -1204,139 +903,146 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.card-icon-img {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+  flex: 0 0 auto;
+  transition: filter 0.3s ease, transform 0.3s ease;
+}
+
+.detection-card.active .card-icon-img {
+  filter: drop-shadow(0 0 8px rgba(236, 69, 78, 0.75));
+  transform: scale(1.05);
 }
 
 .card-label {
   font-weight: 700;
-  font-size: 1.25rem;
-  color: #e2e8f0;
+  font-size: 22px;
+  color: #FFFFFF;
+  white-space: nowrap;
 }
 
 .card-status-badge {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  background: rgba(52, 211, 153, 0.1);
-  border: 1px solid rgba(52, 211, 153, 0.3);
-  border-radius: 0.375rem;
-  margin-top: 0.5rem;
-  transition: all 0.3s ease;
+  justify-content: flex-end;
+  padding: 0;
+  background: transparent;
+  border: none;
+  transition: all 0.25s ease;
+  overflow: visible;
 }
 
 .card-status-badge.active {
-  background: rgba(244, 63, 94, 0.08);
-  border-color: rgba(244, 63, 94, 0.25);
+  background: transparent;
+  border: none;
+}
+
+.alert-bg-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.status-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  position: relative;
+  z-index: 1;
 }
 
 .status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--safe);
-  box-shadow: 0 0 6px var(--safe);
+  background: #54FFCC;
+  box-shadow: 0 0 8px rgba(84,255,204,0.95);
+  transition: all 0.3s ease;
 }
 
 .card-status-badge.active .status-dot {
-  background: var(--alert);
-  box-shadow: 0 0 8px rgba(244, 63, 94, 0.5);
+  background: #fff;
+  box-shadow: 0 0 8px rgba(255,255,255,0.85);
   animation: subtlePulse 2s ease-in-out infinite;
 }
 
-.card-status-badge .status-text {
-  font-family: var(--font-ui);
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--safe);
-  letter-spacing: 0.02em;
-}
-
-.card-status-badge.active .status-text {
-  color: var(--alert);
+.status-text {
+  width: auto;
+  min-width: 28px;
+  height: 20px;
+  font-family: 'PingFang SC', system-ui, -apple-system, 'Microsoft YaHei', sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 20px;
+  color: #FFFFFF;
+  text-align: left;
+  font-style: normal;
+  text-transform: none;
+  white-space: nowrap;
+  transition: color 0.3s ease;
 }
 
 @keyframes subtlePulse {
-
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-
-  50% {
-    transform: scale(1.2);
-    opacity: 0.7;
-  }
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.3); opacity: 0.7; }
 }
 
-@media (max-width: 1024px) {
-  .content-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .video-panel {
-    grid-column: span 2;
-  }
-}
-
-@media (max-width: 640px) {
-  .content-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .video-panel {
-    grid-column: span 1;
-  }
-
-  .tech-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.5rem;
-  }
-}
-
-/* =========================================
-   🚀 Jetson 展厅大屏专属优化 (预警区域重构)
-   ========================================= */
-
-/* 1. 取消原本的 3 列网格，让单个预警面板占满全屏宽度 */
+/* ========================================
+   Jetson 展厅大屏优化
+   ======================================== */
 .tech-dashboard.is-jetson .content-grid {
-  grid-template-columns: 1fr;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1rem 2rem;
 }
 
-/* 2. 放大展厅大屏下的顶部主标题 */
+.tech-dashboard.is-jetson .video-panel,
+.tech-dashboard.is-jetson .desc-panel,
+.tech-dashboard.is-jetson .status-panel {
+  position: relative;
+  left: auto;
+  top: auto;
+  width: auto;
+  bottom: auto;
+  flex: 1;
+  min-height: 0;
+}
+
 .tech-dashboard.is-jetson .brand h1 {
   font-size: 2.25rem;
 }
 
-/* 3. 放大面板头部文字，适配远距离观看 */
-.tech-dashboard.is-jetson .status-panel .panel-header {
-  padding: 1.25rem 2rem;
+.tech-dashboard.is-jetson .status-panel .panel-title-img {
+  height: 60px;
 }
 
-.tech-dashboard.is-jetson .status-panel .header-title {
-  font-size: 1.5rem;
+.tech-dashboard.is-jetson .panel-content {
+  padding: 1.5rem 2rem;
 }
 
-.tech-dashboard.is-jetson .status-panel .header-tag {
-  font-size: 1.1rem;
-}
-
-/* 4. 增加面板内部留白 */
-.tech-dashboard.is-jetson .status-panel .panel-content {
-  padding: 2rem 3rem;
-}
-
-/* 5. 将垂直列表重构为横向 3 列网格 (完美适配横屏电视) */
 .tech-dashboard.is-jetson .detection-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 2.5rem;
+  gap: 2rem;
   height: 100%;
 }
 
-/* 6. 卡片内容垂直居中，并增加交互反馈 */
 .tech-dashboard.is-jetson .detection-card {
   display: flex;
   flex-direction: column;
@@ -1344,34 +1050,28 @@ onUnmounted(() => {
   align-items: center;
   text-align: center;
   padding: 2rem;
-  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
 }
 
 .tech-dashboard.is-jetson .card-top {
   flex-direction: column;
   align-items: center;
   gap: 1.5rem;
-  margin-bottom: 2.5rem;
+  margin-bottom: 2rem;
 }
 
-/* 7. 图标与字体尺寸大幅升级 */
-.tech-dashboard.is-jetson .card-icon-svg {
-  width: 96px;
-  height: 96px;
-  stroke-width: 1.5;
+.tech-dashboard.is-jetson .card-icon-img {
+  width: 80px;
+  height: 80px;
 }
 
 .tech-dashboard.is-jetson .card-label {
-  font-size: 2rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  font-size: 1.75rem;
 }
 
 .tech-dashboard.is-jetson .card-status-badge {
-  padding: 0.85rem 2.5rem;
-  font-size: 1.35rem;
-  border-radius: 0.5rem;
-  gap: 0.75rem;
+  padding: 0.75rem 2rem;
+  font-size: 1.25rem;
+  min-width: 200px;
 }
 
 .tech-dashboard.is-jetson .status-dot {
@@ -1379,21 +1079,66 @@ onUnmounted(() => {
   height: 14px;
 }
 
-/* 8. 背景水印放大，增强视觉张力 */
-.tech-dashboard.is-jetson .alert-watermark {
-  font-size: 14rem;
-  bottom: -40px;
-  right: 0;
-  opacity: 0.15;
+/* Hide side images on Jetson */
+.tech-dashboard.is-jetson .side-image-left,
+.tech-dashboard.is-jetson .side-image-right {
+  display: none;
 }
 
-/* 9. 异常触发时的特效强化 (放大+阴影扩散) */
-.tech-dashboard.is-jetson .detection-card.active {
-  transform: scale(1.03);
-  box-shadow: 0 20px 50px rgba(244, 63, 94, 0.35);
+/* ========================================
+   Responsive
+   ======================================== */
+@media (max-width: 1024px) {
+  .content-grid {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  .content-grid .video-panel,
+  .content-grid .desc-panel,
+  .content-grid .status-panel {
+    position: relative;
+    left: auto;
+    top: auto;
+    width: auto;
+    bottom: auto;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .side-image-left,
+  .side-image-right {
+    display: none;
+  }
 }
 
-.tech-dashboard.is-jetson .detection-card.active .card-icon-svg {
-  filter: drop-shadow(0 0 15px rgba(244, 63, 94, 0.7));
+@media (max-width: 640px) {
+  .content-grid {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.5rem;
+  }
+
+  .content-grid .video-panel,
+  .content-grid .desc-panel,
+  .content-grid .status-panel {
+    position: relative;
+    left: auto;
+    top: auto;
+    width: auto;
+    bottom: auto;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .tech-header {
+    padding: 0.5rem 1rem;
+  }
 }
 </style>
+

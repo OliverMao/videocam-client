@@ -23,32 +23,6 @@ services:
         max-size: "50m"
         max-file: "3"
 
-  pipeline:
-    build: ./pipeline
-    container_name: video-pipeline
-    network_mode: host
-    privileged: true
-    command: ["uv", "run", "pipeline.py", "--fps", "0.3"]
-    environment:
-      - http_proxy=${http_proxy}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
-      - RTSP_URL=rtsp://127.0.0.1:8554/cam_main
-      - RTMP_BASE=rtmp://127.0.0.1:1935/live
-      - BLUR_KERNEL=31
-      - NOISE_STRENGTH=30
-      - PYTHONUNBUFFERED=1
-      - GPU_HOST=${GPU_HOST}
-      - MAE_PORT=${MAE_PORT}
-    volumes:
-      - ./pipeline:/app
-    restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "50m"
-        max-file: "3"
-
   frontend-dev:
     image: node:22
     container_name: video-frontend-dev
